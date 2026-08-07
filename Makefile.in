@@ -35,6 +35,7 @@ SOURCES = \
 	xgameui.idl \
 	xnetworking.c \
 	xnetworking.idl \
+	xodus_utils.c \
 	xpackage.c \
 	xpackage.idl \
 	xpersistentlocalstorage.c \

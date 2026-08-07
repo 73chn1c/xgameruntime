@@ -22,8 +22,10 @@
 #include "private.h"
 #include "userprovider.h"
 #include "util.h"
+#include "xodus_utils.h"
 #include <bcrypt.h>
 #include <dbghelp.h>
+#include <libxml/parser.h>
 #include <ntdef.h>
 #include <wininet.h>
 
@@ -99,6 +101,8 @@ struct XUser
     struct policy *policies;
     struct endpoint *endpoints;
 
+    struct shim_channel shim;
+
     char gamertag[16];
     char modernGamertag[97];
     char modernGamertagSuffix[15];
@@ -125,12 +129,15 @@ static ULONG WINAPI user_Release( IUser *iface )
     TRACE( "iface %p decreasing refcount to %lu.\n", iface, ref );
     if (!ref)
     {
+        shim_stop( &impl->shim );
         if (impl->key) BCryptDestroyKey( impl->key );
         if (impl->proofKey) free( impl->proofKey );
         if (impl->userToken) free( impl->userToken );
         if (impl->policies) free( impl->policies );
-        if (impl->endpoints) {
-            for(UINT32 i = 0; i < impl->endpointsLen; i++) {
+        if (impl->endpoints)
+        {
+            for(UINT32 i = 0; i < impl->endpointsLen; i++)
+            {
                 WindowsDeleteString(impl->endpoints[i].protocol);
                 WindowsDeleteString(impl->endpoints[i].host);
                 WindowsDeleteString(impl->endpoints[i].path);
@@ -143,10 +150,93 @@ static ULONG WINAPI user_Release( IUser *iface )
     return ref;
 }
 
-static HRESULT get_rps_tickets( BOOLEAN allowUi, char **userTicket, char **deviceTicket )
+static HRESULT build_msa_token_request( BOOLEAN allowUi, char **payload, UINT16 *payloadLen )
 {
-    FIXME( "allowUi %d, userTicket %p, deviceTicket %p stub!\n", allowUi, userTicket, deviceTicket );
-    return E_NOTIMPL;
+    xmlNodePtr root;
+    xmlChar *buffer;
+    xmlDocPtr doc;
+    int size;
+
+    TRACE( "allowUi %d, payload %p, payloadLen %p.\n", allowUi, payload, payloadLen );
+
+    if (!(doc = xmlNewDoc( BAD_CAST "1.0" ))) return E_OUTOFMEMORY;
+    if (!(root = xmlNewNode( NULL, BAD_CAST "MSATokenRequest" )))
+    {
+        xmlFreeDoc( doc );
+        return E_OUTOFMEMORY;
+    }
+    xmlDocSetRootElement( doc, root );
+
+    xmlNewTextChild( root, NULL, BAD_CAST "ClientId", BAD_CAST (msaAppId ? msaAppId : "") );
+    xmlNewTextChild( root, NULL, BAD_CAST "AllowUi", BAD_CAST (allowUi ? "true" : "false") );
+    xmlNewTextChild( root, NULL, BAD_CAST "MsaFullTrust", BAD_CAST (fullTrust ? "true" : "false") );
+
+    xmlDocDumpMemory( doc, &buffer, &size );
+    xmlFreeDoc( doc );
+    if (!buffer) return E_OUTOFMEMORY;
+
+    if (size <= 0 || size > 0xffff)
+    {
+        xmlFree( buffer );
+        return E_FAIL; /* the wire format's length field is a UINT16 */
+    }
+    if (!(*payload = malloc( size )))
+    {
+        xmlFree( buffer );
+        return E_OUTOFMEMORY;
+    }
+    memcpy( *payload, buffer, size );
+    *payloadLen = (UINT16)size;
+    xmlFree( buffer );
+    return S_OK;
+}
+
+static HRESULT parse_msa_token_response( const char *payload, UINT16 payloadLen, char **userTicket, char **deviceTicket )
+{
+    xmlNodePtr child, root;
+    xmlDocPtr doc;
+    HRESULT hr = S_OK;
+
+    TRACE( "payload %p, payloadLen %u, userTicket %p, deviceTicket %p.\n", payload, payloadLen, userTicket, deviceTicket );
+
+    if (!(doc = xmlReadMemory( payload, payloadLen, NULL, NULL, 0 ))) return E_FAIL;
+    if (!(root = xmlDocGetRootElement( doc )) || strcmp( (char *)root->name, "MSATokenResponse" ))
+    {
+        hr = E_FAIL;
+        goto cleanup;
+    }
+
+    for (child = root->children; child; child = child->next)
+    {
+        if (child->type != XML_ELEMENT_NODE) continue;
+        if (!strcmp( (char *)child->name, "Token" )) *userTicket = (char *)xmlNodeGetContent( child );
+        else if (!strcmp( (char *)child->name, "DeviceRps" )) *deviceTicket = (char *)xmlNodeGetContent( child );
+        /* Expiry / DeviceExpiry: expiration timestamps, not consumed here yet */
+    }
+
+    if (!*userTicket || !*deviceTicket) hr = E_FAIL;
+
+cleanup:
+    xmlFreeDoc( doc );
+    return hr;
+}
+
+static HRESULT get_rps_tickets( XUserHandle user, BOOLEAN allowUi, char **userTicket, char **deviceTicket )
+{
+    char *payload = NULL, *resp = NULL;
+    UINT16 payloadLen, respType, respLen;
+    HRESULT hr;
+
+    TRACE( "user %p, allowUi %d, userTicket %p, deviceTicket %p.\n", user, allowUi, userTicket, deviceTicket );
+
+    if (FAILED(hr = build_msa_token_request( allowUi, &payload, &payloadLen ))) return hr;
+    hr = shim_call( &user->shim, MSA_TOKEN_REQUEST, payload, payloadLen, &respType, &resp, &respLen );
+    free( payload );
+    if (FAILED(hr)) return hr;
+
+    hr = parse_msa_token_response( resp, respLen, userTicket, deviceTicket );
+    free( resp );
+    return hr;
 }
 
 static HRESULT device_auth( XUserHandle user, const char *deviceTicket, char **deviceToken )
@@ -291,7 +381,7 @@ static HRESULT load_endpoints( XUserHandle user, BYTE *buffer, SIZE_T size )
     IJsonObject *payload = NULL, *tmpObject = NULL;
     IJsonArray *jsonEndpoints = NULL, *jsonPolicies = NULL;
     IVector_IJsonValue *jsonEndpointsVector = NULL, *jsonPoliciesVector = NULL;
-    struct policy *policyCursor = NULL;
+    struct policy *policyCursor = NULL
     struct endpoint *endpointCursor = NULL;
     DOUBLE jsonNumber;
     UINT32 arraySize;
@@ -408,9 +498,11 @@ static HRESULT WINAPI user_Initialize( IUser *iface, const XUserAddOptions optio
     if (FAILED(hr = encode_base64_url( 32, blob + sizeof(BCRYPT_ECCKEY_BLOB) + 32, 43, y, FALSE ))) return hr;
     strcat( impl->proofKey, "\"}" );
 
+    // shim is optional
+    shim_start( &impl->shim, L"XODUS_IPC_PROXY" );
     if (FAILED(hr = http_request( L"GET", L"https://title.mgt.xboxlive.com/titles/default/endpoints?type=1", NULL, NULL, ACCEPT_JSON, &defaultBuffer, &size ))) return hr;
     if (FAILED(hr = load_endpoints( impl, defaultBuffer, size ))) goto cleanup;
-    if (FAILED(hr = get_rps_tickets( options & XUserAddOptions_AddDefaultUserAllowingUI, &userTicket, &deviceTicket ))) goto cleanup;
+    if (FAILED(hr = get_rps_tickets( impl, options & XUserAddOptions_AddDefaultUserAllowingUI, &userTicket, &deviceTicket ))) goto cleanup;
     if (FAILED(hr = device_auth( impl, deviceTicket, &deviceToken ))) goto cleanup;
     if (FAILED(hr = sisu_auth( impl, userTicket, deviceToken, &auth ))) goto cleanup;
     if (FAILED(hr = http_request( L"GET", L"https://title.mgt.xboxlive.com/titles/current/endpoints", NULL, auth, ACCEPT_JSON, &currentBuffer, &size ))) goto cleanup;
