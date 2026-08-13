@@ -101,14 +101,18 @@ static HRESULT WINAPI x_system_XSystemGetXboxLiveSandboxId( IXSystemImpl5 *iface
 
     TRACE( "iface %p, sandboxIdSize %d, sandboxId %p, sandboxIdUsed %p\n", iface, sandboxIdSize, sandboxId, sandboxIdUsed );
 
-    if (!sandboxId || !sandboxIdUsed)
+    /* sandboxIdUsed is documented _Out_opt_ (learn.microsoft.com XSystemGetXboxLiveSandboxId),
+     * unlike sandboxId itself. The real Microsoft_Xbox_Services_*_GDK_C_Thunks.dll shipped with
+     * GDK titles calls this with sandboxIdUsed == NULL as part of XblInitialize's internal setup,
+     * so rejecting a null sandboxIdUsed with E_POINTER breaks XblInitialize for those titles. */
+    if (!sandboxId)
         return E_POINTER;
 
     if (sandboxIdSize < XSystemXboxLiveSandboxIdMaxBytes)
         return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
 
     strcpy_s( sandboxId, sandboxIdSize, Id );
-    *sandboxIdUsed = strlen( Id ) + 1;
+    if (sandboxIdUsed) *sandboxIdUsed = strlen( Id ) + 1;
     return S_OK;
 }
 
