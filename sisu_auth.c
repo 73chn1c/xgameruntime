@@ -418,11 +418,26 @@ HRESULT sisu_perform_auth( const char *msaAppId, BOOLEAN allowUi, struct sisu_au
 
 cleanup:
     shim_stop( &shim );
-    if (key) BCryptDestroyKey( key );
+    if (SUCCEEDED(hr)) result->key = key;
+    else if (key) BCryptDestroyKey( key );
     free( proofKey );
     free( userTicket );
     free( deviceTicket );
     free( deviceToken );
     if (FAILED(hr)) free( result->xblAuthHeader );
     return hr;
+}
+
+HRESULT sisu_sign_request( BCRYPT_KEY_HANDLE key, const char *method, const WCHAR *url, const char *auth, SIZE_T bodySize, const void *body, char signature[104] )
+{
+    TRACE( "key %p, method %s, url %s, auth %s, bodySize %Iu, body %p.\n", key, debugstr_a( method ), debugstr_w( url ), debugstr_a( auth ), bodySize, body );
+
+    /* Real GDK signature-policy version 1 - the only version this fork's
+     * ported auth chain has ever seen in practice (device_auth/sisu_auth
+     * both use it); a per-endpoint policy lookup (SignaturePolicyIndex,
+     * from the title.mgt.xboxlive.com endpoint list) could select a
+     * different version for some services, but that endpoint-discovery
+     * machinery isn't wired up yet - documented as a known simplification
+     * rather than guessed. */
+    return get_signature( key, 1, method, url, auth ? auth : "", (UINT32)bodySize, body, signature );
 }

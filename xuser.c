@@ -20,6 +20,7 @@
  */
 
 #include "private.h"
+#include "sisu_auth.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdkc);
 
@@ -410,22 +411,271 @@ static HRESULT WINAPI x_user_XUserResolvePrivilegeWithUiResult( IXUserImpl6 *ifa
     return E_NOTIMPL;
 }
 
+/* Real, cached Xbox Live sign-in state - lazily populated the first time a
+ * title actually asks for a signed token (XUserGetTokenAndSignatureAsync),
+ * not at XUserAddAsync time (which stays the fast, synchronous, synthetic
+ * path above - every previously-tested title's startup sequence depends
+ * on that completing instantly, so it's deliberately left untouched).
+ * Real network I/O (multiple HTTPS round trips), so this can take real
+ * wall-clock time on the very first call - subsequent calls reuse the
+ * cached result and just compute a fresh per-request signature. */
+static CRITICAL_SECTION real_auth_cs;
+static CRITICAL_SECTION_DEBUG real_auth_cs_debug =
+{
+    0, 0, &real_auth_cs,
+    { &real_auth_cs_debug.ProcessLocksList, &real_auth_cs_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": real_auth_cs") }
+};
+static CRITICAL_SECTION real_auth_cs = { &real_auth_cs_debug, -1, 0, 0, 0, 0 };
+static struct sisu_auth_result real_auth;
+static BOOL real_auth_attempted;
+static HRESULT real_auth_hr = E_FAIL;
+
+/* MSAAppId isn't passed to any XUser* call - real titles carry it in their
+ * own MicrosoftGame.config, which real GDK also reads it from. Same
+ * locate-next-to-exe-and-grep-a-flat-tag approach as
+ * XGameGetXboxTitleId's own MicrosoftGame.config reader in xgame.c
+ * (independent copy, not shared, since that one isn't exported from this
+ * module). */
+static HRESULT get_msa_app_id( char **out )
+{
+    WCHAR path[MAX_PATH];
+    WCHAR *sep;
+    HANDLE file;
+    DWORD size, read_len;
+    char *buf, *tag_start, *tag_end;
+    HRESULT hr;
+
+    if (!GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) ) || !(sep = wcsrchr( path, '\\' )))
+        return E_FAIL;
+    wcscpy( sep + 1, L"MicrosoftGame.config" );
+
+    if ((file = CreateFileW( path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL )) == INVALID_HANDLE_VALUE)
+        return E_FAIL;
+
+    size = GetFileSize( file, NULL );
+    if (size == INVALID_FILE_SIZE || !size || size > 1024 * 1024)
+    {
+        CloseHandle( file );
+        return E_FAIL;
+    }
+    if (!(buf = malloc( size + 1 )))
+    {
+        CloseHandle( file );
+        return E_OUTOFMEMORY;
+    }
+    if (!ReadFile( file, buf, size, &read_len, NULL ))
+    {
+        free( buf );
+        CloseHandle( file );
+        return E_FAIL;
+    }
+    CloseHandle( file );
+    buf[read_len] = 0;
+
+    hr = E_FAIL;
+    if ((tag_start = strstr( buf, "<MSAAppId>" )))
+    {
+        tag_start += strlen( "<MSAAppId>" );
+        if ((tag_end = strstr( tag_start, "</MSAAppId>" )))
+        {
+            *tag_end = 0;
+            if ((*out = _strdup( tag_start ))) hr = S_OK;
+            else hr = E_OUTOFMEMORY;
+        }
+    }
+    free( buf );
+    return hr;
+}
+
+/* Runs sisu_perform_auth() exactly once per process (real network I/O -
+ * multiple HTTPS round trips - so deliberately not repeated), caching
+ * either the success or the failure so later calls fail fast instead of
+ * retrying a real network operation on every single signed request. */
+static HRESULT ensure_real_auth( void )
+{
+    HRESULT hr;
+    char *msaAppId;
+
+    EnterCriticalSection( &real_auth_cs );
+    if (real_auth_attempted)
+    {
+        hr = real_auth_hr;
+        LeaveCriticalSection( &real_auth_cs );
+        return hr;
+    }
+
+    if (FAILED(hr = get_msa_app_id( &msaAppId )))
+    {
+        WARN( "get_msa_app_id failed, hr %#lx - no <MSAAppId> in this title's MicrosoftGame.config?\n", hr );
+    }
+    else
+    {
+        hr = sisu_perform_auth( msaAppId, FALSE, &real_auth );
+        if (FAILED(hr)) WARN( "sisu_perform_auth failed, hr %#lx.\n", hr );
+        free( msaAppId );
+    }
+
+    real_auth_attempted = TRUE;
+    real_auth_hr = hr;
+    LeaveCriticalSection( &real_auth_cs );
+    return hr;
+}
+
+/* Stable, unique-per-callsite address used only for pointer-equality
+ * identity checks between XAsyncBegin and XAsyncGetResult (a plain static
+ * variable, rather than relying on string-literal-pooling giving two
+ * separate literals in this file the same address - guaranteed correct
+ * either way, since it's the address of one single variable). */
+static const char token_sig_identity[] = "XUserGetTokenAndSignatureAsync";
+
+struct token_sig_state
+{
+    char *method;
+    WCHAR *url;
+    void *body;
+    SIZE_T bodySize;
+    char *token;       /* owned, NUL-terminated */
+    SIZE_T tokenSize;  /* strlen(token) + 1 */
+    char signature[105]; /* 104 real signature bytes + NUL we add ourselves */
+    SIZE_T signatureSize;
+};
+
+static void free_token_sig_state( struct token_sig_state *state )
+{
+    if (!state) return;
+    free( state->method );
+    free( state->url );
+    free( state->body );
+    free( state->token );
+    free( state );
+}
+
+static HRESULT CALLBACK token_sig_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    struct token_sig_state *state = data->context;
+    HRESULT hr;
+
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        return IXThreadingImpl_XAsyncSchedule( x_threading_impl, data->async, 0 );
+
+    case XAsyncOp_DoWork:
+        if (FAILED(hr = ensure_real_auth()))
+        {
+            IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, hr, 0 );
+            return S_OK;
+        }
+
+        {
+            /* real_auth.xblAuthHeader is "Authorization: XBL3.0 x=-;<token>" -
+             * XUserGetTokenAndSignatureData.token is documented as just the
+             * value a caller would put in their own Authorization header,
+             * without the header name - skip past "Authorization: ". */
+            static const WCHAR prefix[] = L"Authorization: ";
+            const WCHAR *tokenW = real_auth.xblAuthHeader + wcslen( prefix );
+            int tokenLen = WideCharToMultiByte( CP_UTF8, 0, tokenW, -1, NULL, 0, NULL, NULL );
+
+            if (!tokenLen || !(state->token = malloc( tokenLen )) ||
+                !WideCharToMultiByte( CP_UTF8, 0, tokenW, -1, state->token, tokenLen, NULL, NULL ))
+            {
+                hr = HRESULT_FROM_WIN32( GetLastError() );
+                IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, hr, 0 );
+                return S_OK;
+            }
+            state->tokenSize = (SIZE_T)tokenLen;
+        }
+
+        hr = sisu_sign_request( real_auth.key, state->method, state->url, state->token, state->bodySize, state->body, state->signature );
+        if (SUCCEEDED(hr))
+        {
+            state->signature[104] = 0;
+            state->signatureSize = 105;
+        }
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, hr, sizeof(XUserGetTokenAndSignatureData) + state->tokenSize + state->signatureSize );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+    {
+        XUserGetTokenAndSignatureData *out;
+        SIZE_T need = sizeof(*out) + state->tokenSize + state->signatureSize;
+        char *strings;
+
+        if (data->bufferSize < need) return E_NOT_SUFFICIENT_BUFFER;
+        out = data->buffer;
+        strings = (char *)data->buffer + sizeof(*out);
+        memcpy( strings, state->token, state->tokenSize );
+        memcpy( strings + state->tokenSize, state->signature, state->signatureSize );
+        out->tokenSize = state->tokenSize;
+        out->signatureSize = state->signatureSize;
+        out->token = strings;
+        out->signature = strings + state->tokenSize;
+        return S_OK;
+    }
+
+    case XAsyncOp_Cleanup:
+        free_token_sig_state( state );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureAsync( IXUserImpl6 *iface, XUserHandle user, XUserGetTokenAndSignatureOptions options, const char *method, const char *url, SIZE_T headerCount, const XUserGetTokenAndSignatureHttpHeader *headers, SIZE_T bodySize, const void *bodyBuffer, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, headers %p, bodySize %Iu, bodyBuffer %p, async %p stub!\n", iface, user, options, debugstr_a( method ), debugstr_a( url ), headerCount, headers, bodySize, bodyBuffer, async );
-    return E_NOTIMPL;
+    struct token_sig_state *state;
+    int urlWLen;
+    HRESULT hr;
+
+    TRACE( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, headers %p, bodySize %Iu, bodyBuffer %p, async %p.\n",
+           iface, user, options, debugstr_a( method ), debugstr_a( url ), headerCount, headers, bodySize, bodyBuffer, async );
+
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+    if (!method || !url || !async) return E_INVALIDARG;
+
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
+    if (!(state->method = _strdup( method ))) { free_token_sig_state( state ); return E_OUTOFMEMORY; }
+    if (!(urlWLen = MultiByteToWideChar( CP_UTF8, 0, url, -1, NULL, 0 ))) { free_token_sig_state( state ); return HRESULT_FROM_WIN32( GetLastError() ); }
+    if (!(state->url = malloc( urlWLen * sizeof(WCHAR) ))) { free_token_sig_state( state ); return E_OUTOFMEMORY; }
+    MultiByteToWideChar( CP_UTF8, 0, url, -1, state->url, urlWLen );
+    if (bodySize)
+    {
+        if (!(state->body = malloc( bodySize ))) { free_token_sig_state( state ); return E_OUTOFMEMORY; }
+        memcpy( state->body, bodyBuffer, bodySize );
+        state->bodySize = bodySize;
+    }
+
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &token_sig_identity, "XUserGetTokenAndSignatureAsync", token_sig_provider )))
+        free_token_sig_state( state );
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
 {
-    FIXME( "iface %p, async %p, bufferSize %p stub!\n", iface, async, bufferSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, bufferSize %p.\n", iface, async, bufferSize );
+
+    if (!async || !bufferSize) return E_INVALIDARG;
+
+    /* XAsyncGetResultSize already returns E_PENDING/the real failure HRESULT
+     * if the op isn't done or failed, and otherwise the exact
+     * requiredBufferSize XAsyncComplete was given - no extra status check
+     * needed here. */
+    return IXThreadingImpl_XAsyncGetResultSize( x_threading_impl, async, bufferSize );
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResult( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T bufferSize, void *buffer, XUserGetTokenAndSignatureData **ptrToBuffer, SIZE_T *bufferUsed )
 {
-    FIXME( "iface %p, async %p, bufferSize %Iu, buffer %p, ptrToBuffer %p, bufferUsed %p stub!\n", iface, async, bufferSize, buffer, ptrToBuffer, bufferUsed );
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, bufferSize %Iu, buffer %p, ptrToBuffer %p, bufferUsed %p.\n", iface, async, bufferSize, buffer, ptrToBuffer, bufferUsed );
+
+    if (!async || !buffer) return E_INVALIDARG;
+
+    hr = IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &token_sig_identity, bufferSize, buffer, bufferUsed );
+    if (SUCCEEDED(hr) && ptrToBuffer) *ptrToBuffer = buffer;
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Async( IXUserImpl6 *iface, XUserHandle user, XUserGetTokenAndSignatureOptions options, const WCHAR *method, const WCHAR *url, SIZE_T headerCount, const XUserGetTokenAndSignatureUtf16HttpHeader *headers, SIZE_T bodySize, const void *bodyBuffer, XAsyncBlock *async )
