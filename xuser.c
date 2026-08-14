@@ -88,18 +88,42 @@ static struct x_user_data *get_default_user( void )
     return user;
 }
 
-struct x_user_add_async_result
+/* Stable identity pointer for XAsyncBegin/XAsyncGetResult pairing - see the
+ * identical pattern and rationale on token_sig_identity below. */
+static const char x_user_add_identity[] = "XUserAddAsync";
+
+struct x_user_add_state
 {
     HRESULT hr;
     XUserHandle user;
 };
 
-static void WINAPI x_user_add_async_complete( void *context, BOOLEAN canceled )
+static HRESULT CALLBACK x_user_add_provider( XAsyncOp op, const XAsyncProviderData *data )
 {
-    XAsyncBlock *async = context;
+    struct x_user_add_state *state = data->context;
 
-    if (canceled) return;
-    if (async->callback) async->callback( async );
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        /* No real Xbox Live account picker or network round trip involved -
+         * the result was already computed synchronously before XAsyncBegin
+         * was even called (see x_user_XUserAddAsync below), so complete
+         * immediately instead of scheduling a DoWork step. */
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, state->hr, SUCCEEDED(state->hr) ? sizeof(XUserHandle) : 0 );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+        if (data->bufferSize < sizeof(XUserHandle)) return E_NOT_SUFFICIENT_BUFFER;
+        *(XUserHandle *)data->buffer = state->user;
+        return S_OK;
+
+    case XAsyncOp_Cleanup:
+        free( state );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
 }
 
 static HRESULT WINAPI x_user_QueryInterface( IXUserImpl6 *iface, REFIID iid, void **out )
@@ -186,8 +210,9 @@ static HRESULT WINAPI x_user_XUserGetMaxUsers( IXUserImpl6 *iface, UINT32 *maxUs
 
 static HRESULT WINAPI x_user_XUserAddAsync( IXUserImpl6 *iface, XUserAddOptions options, XAsyncBlock *async )
 {
-    struct x_user_add_async_result *result;
+    struct x_user_add_state *state;
     struct x_user_data *user;
+    HRESULT hr;
 
     TRACE( "iface %p, options %#x, async %p.\n", iface, (unsigned int)options, async );
 
@@ -198,66 +223,47 @@ static HRESULT WINAPI x_user_XUserAddAsync( IXUserImpl6 *iface, XUserAddOptions 
     if ((options & XUserAddOptions_AllowGuests) && (options & XUserAddOptions_AddDefaultUserSilently))
         return E_INVALIDARG;
 
-    if (!(result = calloc( 1, sizeof(*result) ))) return E_OUTOFMEMORY;
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
 
     /* No real Xbox Live account picker exists on this build, so every
      * XUserAddOptions combination (None / AddDefaultUserSilently /
      * AddDefaultUserAllowingUI, with or without AllowGuests) resolves the
      * same documented "default user" rather than showing UI - see the
-     * struct x_user_data comment above. */
+     * struct x_user_data comment above. Computed synchronously up front;
+     * x_user_add_provider's Begin step just reports it through the real
+     * async engine (asyncBlock->internal[0] is that engine's own state
+     * pointer now - see async_state_from_block - so every XUser*Async
+     * completion has to go through XAsyncBegin/XAsyncComplete rather than
+     * stashing a private result type there directly, or generic callers
+     * like XAsyncGetStatus/XAsyncGetResultSize crash dereferencing it as
+     * the wrong type). */
     if ((user = get_default_user()))
     {
-        result->hr = S_OK;
-        result->user = (XUserHandle)user;
+        state->hr = S_OK;
+        state->user = (XUserHandle)user;
     }
     else
     {
-        result->hr = E_OUTOFMEMORY;
-        result->user = NULL;
+        state->hr = E_OUTOFMEMORY;
+        state->user = NULL;
     }
 
-    async->internal[0] = result;
-
-    if (async->queue)
-    {
-        HRESULT hr = IXThreadingImpl_XTaskQueueSubmitCallback( x_threading_impl, async->queue,
-                                                                 XTaskQueuePort_Completion, async,
-                                                                 x_user_add_async_complete );
-        if (FAILED( hr ))
-        {
-            async->internal[0] = NULL;
-            free( result );
-            return hr;
-        }
-    }
-    else if (async->callback)
-    {
-        /* Real GDK falls back to the title's default process task queue
-         * when async->queue is NULL; this build has no such default queue
-         * (XTaskQueueGetCurrentProcessTaskQueue is unimplemented), so
-         * complete inline rather than silently dropping the completion. */
-        async->callback( async );
-    }
-
-    return S_OK;
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &x_user_add_identity, "XUserAddAsync", x_user_add_provider )))
+        free( state );
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserAddResult( IXUserImpl6 *iface, XAsyncBlock *async, XUserHandle *newUser )
 {
-    struct x_user_add_async_result *result;
+    XUserHandle user = NULL;
     HRESULT hr;
 
     TRACE( "iface %p, async %p, newUser %p.\n", iface, async, newUser );
 
     if (!async || !newUser) return E_INVALIDARG;
-    if (!(result = async->internal[0])) return E_UNEXPECTED;
 
-    hr = result->hr;
-    *newUser = SUCCEEDED( hr ) ? result->user : NULL;
-
-    async->internal[0] = NULL;
-    free( result );
-
+    hr = IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_user_add_identity, sizeof(user), &user, NULL );
+    *newUser = SUCCEEDED( hr ) ? user : NULL;
     return hr;
 }
 

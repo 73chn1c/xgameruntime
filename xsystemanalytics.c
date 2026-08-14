@@ -20,6 +20,7 @@
  */
 
 #include "private.h"
+#include <winternl.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdkc);
 
@@ -68,13 +69,16 @@ static ULONG WINAPI x_system_analytics_Release( IXSystemAnalyticsImpl *iface )
     return ref;
 }
 
-static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( IXSystemAnalyticsImpl *iface, XSystemAnalyticsInfo *__ret )
+/* Tries the real WinRT Windows.System.Profile.AnalyticsInfo path. This is a
+ * publicly documented WinRT runtime class (learn.microsoft.com), not GDK-specific.
+ * Returns FALSE if the class isn't activatable in this environment (e.g. Wine
+ * builds without a windows.system.profile-equivalent server registered) so the
+ * caller can fall back rather than returning NULL to the title. */
+static BOOL winrt_analytics_info( XSystemAnalyticsInfo *info )
 {
-    /* For Windows, XSystemAnalyticsInfo->form is always "Desktop" */
     const WCHAR *analytics_info_str = RuntimeClass_Windows_System_Profile_AnalyticsInfo;
     HSTRING analytics_info_class, deviceFamilyVersion, deviceFamily;
     const WCHAR *deviceFamilyVersionStr, *deviceFamilyStr;
-    XSystemAnalyticsInfo info;
     char *str, *splitter;
     ULONGLONG version;
     HRESULT status;
@@ -83,24 +87,22 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
     IAnalyticsInfoStatics *analytics_info_statics = NULL;
     IAnalyticsVersionInfo *analytics_version_info = NULL;
 
-    TRACE( "iface %p.\n", iface );
-
     status = WindowsCreateString( analytics_info_str, wcslen( analytics_info_str ), &analytics_info_class );
-    if (FAILED( status )) return NULL;
+    if (FAILED( status )) return FALSE;
 
     status = RoGetActivationFactory( analytics_info_class, &IID_IAnalyticsInfoStatics, (void **)&analytics_info_statics );
     WindowsDeleteString( analytics_info_class );
-    if (FAILED( status )) return NULL;
+    if (FAILED( status )) return FALSE;
 
     status = IAnalyticsInfoStatics_get_VersionInfo( analytics_info_statics, &analytics_version_info );
     IAnalyticsInfoStatics_Release( analytics_info_statics );
-    if (FAILED( status )) return NULL;
+    if (FAILED( status )) return FALSE;
 
     status = IAnalyticsVersionInfo_get_DeviceFamilyVersion( analytics_version_info, &deviceFamilyVersion );
     if (FAILED( status ))
     {
         IAnalyticsVersionInfo_Release( analytics_version_info );
-        return NULL;
+        return FALSE;
     }
 
     status = IAnalyticsVersionInfo_get_DeviceFamily( analytics_version_info, &deviceFamily );
@@ -108,7 +110,7 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
     if (FAILED( status ))
     {
         WindowsDeleteString( deviceFamilyVersion );
-        return NULL;
+        return FALSE;
     }
 
     deviceFamilyStr = WindowsGetStringRawBuffer( deviceFamily, NULL );
@@ -119,7 +121,7 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
     {
         WindowsDeleteString( deviceFamilyVersion );
         WindowsDeleteString( deviceFamily );
-        return NULL;
+        return FALSE;
     }
 
     if (!WideCharToMultiByte( CP_UTF8, 0, deviceFamilyStr, -1, str, strSize, NULL, NULL ))
@@ -127,7 +129,7 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
         WindowsDeleteString( deviceFamilyVersion );
         WindowsDeleteString( deviceFamily );
         free( str );
-        return NULL;
+        return FALSE;
     }
 
     splitter = strchr( str, '.' );
@@ -135,8 +137,8 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
     {
         *splitter = '\0';
 
-        strcpy( info.family, str );
-        strcpy( info.form, splitter + 1 );
+        strcpy( info->family, str );
+        strcpy( info->form, splitter + 1 );
     }
 
     WindowsDeleteString( deviceFamily );
@@ -149,26 +151,65 @@ static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( 
     if (!str)
     {
         WindowsDeleteString( deviceFamilyVersion );
-        return NULL;
+        return FALSE;
     }
 
     if (!WideCharToMultiByte( CP_UTF8, 0, deviceFamilyVersionStr, -1, str, strSize, NULL, NULL ))
     {
         WindowsDeleteString( deviceFamilyVersion );
         free( str );
-        return NULL;
+        return FALSE;
     }
 
     version = strtoull( str, NULL, 10 );
-    info.osVersion.major = (UINT16)(version >> 48);
-    info.osVersion.minor = (UINT16)((version >> 32) & 0xFFFF);
-    info.osVersion.build = (UINT16)((version >> 16) & 0xFFFF);
-    info.osVersion.revision = (UINT16)(version & 0xFFFF);
+    info->osVersion.major = (UINT16)(version >> 48);
+    info->osVersion.minor = (UINT16)((version >> 32) & 0xFFFF);
+    info->osVersion.build = (UINT16)((version >> 16) & 0xFFFF);
+    info->osVersion.revision = (UINT16)(version & 0xFFFF);
 
     WindowsDeleteString( deviceFamilyVersion );
     free( str );
 
-    info.hostingOsVersion = info.osVersion;
+    info->hostingOsVersion = info->osVersion;
+
+    return TRUE;
+}
+
+/* Fallback used when Windows.System.Profile.AnalyticsInfo isn't activatable
+ * (no WinRT server registered for it in this build). Real hardware/Windows
+ * never fails XSystemGetAnalyticsInfo, and observed titles (e.g. Grounded's
+ * Maine-WinGDK-Shipping.exe) don't null-check its result, so returning NULL
+ * here crashes the title. RtlGetVersion is a real, always-present ntdll API;
+ * "Windows"/"Desktop" matches this function's own pre-existing comment about
+ * the family/form split for Windows. */
+static void fallback_analytics_info( XSystemAnalyticsInfo *info )
+{
+    RTL_OSVERSIONINFOEXW osinfo = {sizeof(osinfo)};
+
+    RtlGetVersion( &osinfo );
+
+    strcpy( info->family, "Windows" );
+    strcpy( info->form, "Desktop" );
+
+    info->osVersion.major = (UINT16)osinfo.dwMajorVersion;
+    info->osVersion.minor = (UINT16)osinfo.dwMinorVersion;
+    info->osVersion.build = (UINT16)osinfo.dwBuildNumber;
+    info->osVersion.revision = 0;
+
+    info->hostingOsVersion = info->osVersion;
+}
+
+static XSystemAnalyticsInfo* WINAPI x_system_analytics_XSystemGetAnalyticsInfo( IXSystemAnalyticsImpl *iface, XSystemAnalyticsInfo *__ret )
+{
+    XSystemAnalyticsInfo info = {0};
+
+    TRACE( "iface %p.\n", iface );
+
+    if (!winrt_analytics_info( &info ))
+    {
+        WARN( "Windows.System.Profile.AnalyticsInfo not activatable, using fallback.\n" );
+        fallback_analytics_info( &info );
+    }
 
     *__ret = info;
 
