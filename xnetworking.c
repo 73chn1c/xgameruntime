@@ -143,20 +143,51 @@ static HRESULT WINAPI x_networking_XNetworkingVerifyServerCertificate( IXNetwork
 
 static HRESULT WINAPI x_networking_XNetworkingGetConnectivityHint( IXNetworkingImpl2 *iface, XNetworkingConnectivityHint *connectivityHint )
 {
-    FIXME( "iface %p, connectivityHint %p stub!\n", iface, connectivityHint );
-    return E_NOTIMPL;
+    TRACE( "iface %p, connectivityHint %p.\n", iface, connectivityHint );
+
+    if (!connectivityHint) return E_INVALIDARG;
+
+    /* This build has no real per-adapter network enumeration, but this
+     * process demonstrably has working outbound internet access (SISU auth,
+     * WinHTTP requests elsewhere in this DLL all succeed) - reporting the
+     * previous hard E_NOTIMPL made every caller treat the network as
+     * unusable. XCurl's own curl_global_init() checking this before
+     * proceeding is the confirmed root cause of a LowLevelFatalError
+     * ("Could not initialize libcurl") hit identically by two independent
+     * UE4/GDK titles (DiggingHole, PigeonSimulator2) - both only reachable
+     * via a live crash-dialog screenshot, since neither logs the underlying
+     * XNetworking call chain. ianaInterfaceType 6 = IF_TYPE_ETHERNET_CSMACD,
+     * the public IANA ifType-MIB registry value for a wired connection. */
+    connectivityHint->connectivityLevel = XNetworkingConnectivityLevelHint_InternetAccess;
+    connectivityHint->connectivityCost = XNetworkingConnectivityCostHint_Unrestricted;
+    connectivityHint->ianaInterfaceType = 6;
+    connectivityHint->networkInitialized = TRUE;
+    connectivityHint->approachingDataLimit = FALSE;
+    connectivityHint->overDataLimit = FALSE;
+    connectivityHint->roaming = FALSE;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI x_networking_XNetworkingRegisterConnectivityHintChanged( IXNetworkingImpl2 *iface, XTaskQueueHandle queue, void *context, XNetworkingConnectivityHintChangedCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    TRACE( "iface %p, queue %p, context %p, callback %p, token %p.\n", iface, queue, context, callback, token );
+
+    if (!callback || !token) return E_INVALIDARG;
+
+    /* No real per-adapter change notification exists on this build, but the
+     * connectivity hint this DLL reports never changes either - accepting
+     * the registration (and simply never firing the callback) matches real
+     * behavior on a machine whose connectivity state is stable, and avoids
+     * callers treating a failed *registration* itself as fatal. */
+    token->token = 0;
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_networking_XNetworkingUnregisterConnectivityHintChanged( IXNetworkingImpl2 *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
-    FIXME( "iface %p, token %p, wait %d stub!\n", iface, &token, wait );
-    return FALSE;
+    TRACE( "iface %p, token %p, wait %d.\n", iface, &token, wait );
+    return TRUE;
 }
 
 static HRESULT WINAPI x_networking_XNetworkingQueryConfigurationSetting( IXNetworkingImpl2 *iface, XNetworkingConfigurationSetting configurationSetting, UINT64 *value )
