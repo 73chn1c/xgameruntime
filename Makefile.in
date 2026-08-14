@@ -1,8 +1,12 @@
 MODULE    = xgameruntime.dll
-IMPORTS   = combase
+IMPORTS   = combase bcrypt winhttp wininet ws2_32
 
 SOURCES = \
+	json_min.c \
 	main.c \
+	shim_ipc.c \
+	shim_xml.c \
+	sisu_auth.c \
 	xaccessibility.c \
 	xaccessibility.idl \
 	xappcapture.c \

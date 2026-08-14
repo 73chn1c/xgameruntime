@@ -1,3 +1,4 @@
+@ stdcall SisuPerformAuthTest(str long ptr) sisu_perform_auth
 @ stub -private DllCanUnloadNow()
 @ stdcall -private InitializeApiImpl(long long)
 @ stdcall -private InitializeApiImplEx(long long long)
