@@ -101,14 +101,19 @@ static HRESULT WINAPI x_system_XSystemGetXboxLiveSandboxId( IXSystemImpl5 *iface
 
     TRACE( "iface %p, sandboxIdSize %d, sandboxId %p, sandboxIdUsed %p\n", iface, sandboxIdSize, sandboxId, sandboxIdUsed );
 
-    if (!sandboxId || !sandboxIdUsed)
+    /* Per the real, documented Microsoft GDK contract (learn.microsoft.com/.../xsystemgetxboxlivesandboxid),
+     * sandboxIdUsed is annotated _Out_opt_ - it is genuinely optional/nullable, unlike sandboxId itself.
+     * Confirmed empirically too: the real Microsoft_Xbox_Services_141_GDK_C_Thunks.dll shipped with real
+     * GDK titles (e.g. Inscryption) calls this with sandboxIdUsed == NULL as part of XblInitialize's
+     * internal setup - rejecting that with E_POINTER broke XblInitialize for every such title. */
+    if (!sandboxId)
         return E_POINTER;
 
     if (sandboxIdSize < XSystemXboxLiveSandboxIdMaxBytes)
         return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
 
     strcpy_s( sandboxId, sandboxIdSize, Id );
-    *sandboxIdUsed = strlen( Id ) + 1;
+    if (sandboxIdUsed) *sandboxIdUsed = strlen( Id ) + 1;
     return S_OK;
 }
 

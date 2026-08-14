@@ -70,10 +70,67 @@ static ULONG WINAPI x_game_Release( IXGameImpl3 *iface )
     return ref;
 }
 
+/* Real GDK titles read their own numeric title ID back out of the
+ * MicrosoftGame.config that ships next to the executable (the same file the
+ * GDK Editor's Store Association Wizard writes <TitleId> into) rather than
+ * getting it from any Xbox-specific registration, so this works unchanged
+ * for the PC/Linux case. */
 static HRESULT WINAPI x_game_XGameGetXboxTitleId( IXGameImpl3 *iface, UINT32 *titleId )
 {
-    FIXME( "iface %p, titleId %p stub!\n", iface, titleId );
-    return E_NOTIMPL;
+    WCHAR path[MAX_PATH];
+    WCHAR *sep;
+    HANDLE file;
+    DWORD size, read_len;
+    char *buf, *tag_start, *tag_end;
+    HRESULT hr;
+
+    TRACE( "iface %p, titleId %p.\n", iface, titleId );
+
+    if (!titleId) return E_INVALIDARG;
+
+    if (!GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) ) || !(sep = wcsrchr( path, '\\' )))
+        return E_FAIL;
+    wcscpy( sep + 1, L"MicrosoftGame.config" );
+
+    if ((file = CreateFileW( path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL )) == INVALID_HANDLE_VALUE)
+        return E_FAIL;
+
+    size = GetFileSize( file, NULL );
+    if (size == INVALID_FILE_SIZE || !size || size > 1024 * 1024)
+    {
+        CloseHandle( file );
+        return E_FAIL;
+    }
+
+    if (!(buf = malloc( size + 1 )))
+    {
+        CloseHandle( file );
+        return E_OUTOFMEMORY;
+    }
+
+    if (!ReadFile( file, buf, size, &read_len, NULL ))
+    {
+        free( buf );
+        CloseHandle( file );
+        return E_FAIL;
+    }
+    CloseHandle( file );
+    buf[read_len] = 0;
+
+    hr = E_FAIL;
+    if ((tag_start = strstr( buf, "<TitleId>" )))
+    {
+        tag_start += strlen( "<TitleId>" );
+        if ((tag_end = strstr( tag_start, "</TitleId>" )))
+        {
+            *tag_end = 0;
+            *titleId = strtoul( tag_start, NULL, 16 );
+            hr = S_OK;
+        }
+    }
+
+    free( buf );
+    return hr;
 }
 
 static void WINAPI x_game_XLaunchNewGame( IXGameImpl3 *iface, const char *exePath, const char *args, XUserHandle defaultUser )

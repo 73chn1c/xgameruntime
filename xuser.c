@@ -36,6 +36,71 @@ static inline struct x_user *impl_from_IXUserImpl6( IXUserImpl6 *iface )
     return CONTAINING_RECORD( iface, struct x_user, IXUserImpl6_iface );
 }
 
+/* This build has no real Xbox Live account/sign-in stack (no network
+ * account picker, no cached MSA tokens), so per the documented contract for
+ * XUserAddAsync (learn.microsoft.com .../xuser/functions/xuseraddasync -
+ * "XUserAddOptions::AddDefaultUserSilently ... does not show a UI") this
+ * implements the offline/no-UI path: a single, stable, synthetic local
+ * default user that XUserGetMaxUsers() (already fixed at 1, see below)
+ * always allows exactly one of. The handle is an immortal process-lifetime
+ * singleton rather than individually refcounted/freed - real titles only
+ * ever see a single default user on this build, there is nothing else to
+ * multiplex, and never actually deallocating it means XUserCloseHandle can
+ * never be a use-after-close/double-free hazard. */
+struct x_user_data
+{
+    UINT64 id;
+    XUserLocalId local_id;
+};
+
+static CRITICAL_SECTION default_user_cs;
+static CRITICAL_SECTION_DEBUG default_user_cs_debug =
+{
+    0, 0, &default_user_cs,
+    { &default_user_cs_debug.ProcessLocksList, &default_user_cs_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": default_user_cs") }
+};
+static CRITICAL_SECTION default_user_cs = { &default_user_cs_debug, -1, 0, 0, 0, 0 };
+static struct x_user_data *default_user;
+
+static struct x_user_data *get_default_user( void )
+{
+    struct x_user_data *user;
+
+    EnterCriticalSection( &default_user_cs );
+    if (!default_user)
+    {
+        if ((user = calloc( 1, sizeof(*user) )))
+        {
+            /* Real XUserLocalId/XUID values are opaque to titles - any
+             * stable, nonzero value round-trips correctly through
+             * XUserGetLocalId()/XUserFindUserByLocalId() and
+             * XUserGetId()/XUserFindUserById(), which is all the documented
+             * contract requires. */
+            user->local_id.value = 1;
+            user->id = 1;
+            default_user = user;
+        }
+    }
+    user = default_user;
+    LeaveCriticalSection( &default_user_cs );
+    return user;
+}
+
+struct x_user_add_async_result
+{
+    HRESULT hr;
+    XUserHandle user;
+};
+
+static void WINAPI x_user_add_async_complete( void *context, BOOLEAN canceled )
+{
+    XAsyncBlock *async = context;
+
+    if (canceled) return;
+    if (async->callback) async->callback( async );
+}
+
 static HRESULT WINAPI x_user_QueryInterface( IXUserImpl6 *iface, REFIID iid, void **out )
 {
     struct x_user *impl = impl_from_IXUserImpl6( iface );
@@ -83,19 +148,32 @@ static ULONG WINAPI x_user_Release( IXUserImpl6 *iface )
 
 static HRESULT WINAPI x_user_XUserDuplicateHandle( IXUserImpl6 *iface, XUserHandle handle, XUserHandle *duplicatedHandle )
 {
-    FIXME( "iface %p, handle %p, duplicatedHandle %p stub!\n", iface, handle, duplicatedHandle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, handle %p, duplicatedHandle %p.\n", iface, handle, duplicatedHandle );
+
+    if (!duplicatedHandle) return E_INVALIDARG;
+    if (!handle || (struct x_user_data *)handle != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    /* The handle is an immortal singleton (see struct x_user_data above),
+     * so a "duplicate" is just the same pointer - there is nothing separate
+     * to allocate or refcount. */
+    *duplicatedHandle = handle;
+    return S_OK;
 }
 
 static void WINAPI x_user_XUserCloseHandle( IXUserImpl6 *iface, XUserHandle user )
 {
-    FIXME( "iface %p, user %p stub!\n", iface, user );
+    TRACE( "iface %p, user %p.\n", iface, user );
+    /* No-op: see struct x_user_data comment above - the synthetic default
+     * user is never actually deallocated, so closing a handle to it is
+     * always safe and never a use-after-close hazard. */
 }
 
 static INT32 WINAPI x_user_XUserCompare( IXUserImpl6 *iface, XUserHandle user1, XUserHandle user2 )
 {
-    FIXME( "iface %p, user1 %p, user2 %p stub!\n", iface, user1, user2 );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user1 %p, user2 %p.\n", iface, user1, user2 );
+    /* Only one user (the singleton) can ever exist on this build, so handle
+     * identity is exactly user identity. */
+    return user1 == user2 ? 0 : -1;
 }
 
 static HRESULT WINAPI x_user_XUserGetMaxUsers( IXUserImpl6 *iface, UINT32 *maxUsers )
@@ -107,50 +185,161 @@ static HRESULT WINAPI x_user_XUserGetMaxUsers( IXUserImpl6 *iface, UINT32 *maxUs
 
 static HRESULT WINAPI x_user_XUserAddAsync( IXUserImpl6 *iface, XUserAddOptions options, XAsyncBlock *async )
 {
-    FIXME( "iface %p, options %d, async %p stub!\n", iface, options, async );
-    return E_NOTIMPL;
+    struct x_user_add_async_result *result;
+    struct x_user_data *user;
+
+    TRACE( "iface %p, options %#x, async %p.\n", iface, (unsigned int)options, async );
+
+    if (!async) return E_INVALIDARG;
+    /* Documented as mutually exclusive: "You cannot use
+     * XUserAddOptions::AllowGuests with XUserAddOptions::AddDefaultUserSilently.
+     * A guest cannot be the default user." */
+    if ((options & XUserAddOptions_AllowGuests) && (options & XUserAddOptions_AddDefaultUserSilently))
+        return E_INVALIDARG;
+
+    if (!(result = calloc( 1, sizeof(*result) ))) return E_OUTOFMEMORY;
+
+    /* No real Xbox Live account picker exists on this build, so every
+     * XUserAddOptions combination (None / AddDefaultUserSilently /
+     * AddDefaultUserAllowingUI, with or without AllowGuests) resolves the
+     * same documented "default user" rather than showing UI - see the
+     * struct x_user_data comment above. */
+    if ((user = get_default_user()))
+    {
+        result->hr = S_OK;
+        result->user = (XUserHandle)user;
+    }
+    else
+    {
+        result->hr = E_OUTOFMEMORY;
+        result->user = NULL;
+    }
+
+    async->internal[0] = result;
+
+    if (async->queue)
+    {
+        HRESULT hr = IXThreadingImpl_XTaskQueueSubmitCallback( x_threading_impl, async->queue,
+                                                                 XTaskQueuePort_Completion, async,
+                                                                 x_user_add_async_complete );
+        if (FAILED( hr ))
+        {
+            async->internal[0] = NULL;
+            free( result );
+            return hr;
+        }
+    }
+    else if (async->callback)
+    {
+        /* Real GDK falls back to the title's default process task queue
+         * when async->queue is NULL; this build has no such default queue
+         * (XTaskQueueGetCurrentProcessTaskQueue is unimplemented), so
+         * complete inline rather than silently dropping the completion. */
+        async->callback( async );
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserAddResult( IXUserImpl6 *iface, XAsyncBlock *async, XUserHandle *newUser )
 {
-    FIXME( "iface %p, async %p, newUser %p stub!\n", iface, async, newUser );
-    return E_NOTIMPL;
+    struct x_user_add_async_result *result;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, newUser %p.\n", iface, async, newUser );
+
+    if (!async || !newUser) return E_INVALIDARG;
+    if (!(result = async->internal[0])) return E_UNEXPECTED;
+
+    hr = result->hr;
+    *newUser = SUCCEEDED( hr ) ? result->user : NULL;
+
+    async->internal[0] = NULL;
+    free( result );
+
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserGetLocalId( IXUserImpl6 *iface, XUserHandle user, XUserLocalId *userLocalId )
 {
-    FIXME( "iface %p, user %p, userLocalId %p stub!\n", iface, user, userLocalId );
-    return E_NOTIMPL;
+    struct x_user_data *impl = (struct x_user_data *)user;
+
+    TRACE( "iface %p, user %p, userLocalId %p.\n", iface, user, userLocalId );
+
+    if (!userLocalId) return E_INVALIDARG;
+    if (!user || impl != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    *userLocalId = impl->local_id;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserFindUserByLocalId( IXUserImpl6 *iface, XUserLocalId userLocalId, XUserHandle *handle )
 {
-    FIXME( "iface %p, userLocalId %p, handle %p stub!\n", iface, &userLocalId, handle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userLocalId %s, handle %p.\n", iface, wine_dbgstr_longlong(userLocalId.value), handle );
+
+    if (!handle) return E_INVALIDARG;
+
+    if (!default_user || userLocalId.value != default_user->local_id.value)
+    {
+        *handle = NULL;
+        return E_GAMEUSER_USER_NOT_FOUND;
+    }
+
+    *handle = (XUserHandle)default_user;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserGetId( IXUserImpl6 *iface, XUserHandle user, UINT64 *userId )
 {
-    FIXME( "iface %p, user %p, userId %p stub!\n", iface, user, userId );
-    return E_NOTIMPL;
+    struct x_user_data *impl = (struct x_user_data *)user;
+
+    TRACE( "iface %p, user %p, userId %p.\n", iface, user, userId );
+
+    if (!userId) return E_INVALIDARG;
+    if (!user || impl != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    *userId = impl->id;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserFindUserById( IXUserImpl6 *iface, UINT64 userId, XUserHandle *handle )
 {
-    FIXME( "iface %p, userId %llu, handle %p stub!\n", iface, userId, handle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userId %s, handle %p.\n", iface, wine_dbgstr_longlong(userId), handle );
+
+    if (!handle) return E_INVALIDARG;
+
+    if (!default_user || userId != default_user->id)
+    {
+        *handle = NULL;
+        return E_GAMEUSER_USER_NOT_FOUND;
+    }
+
+    *handle = (XUserHandle)default_user;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserGetIsGuest( IXUserImpl6 *iface, XUserHandle user, BOOLEAN *isGuest )
 {
-    FIXME( "iface %p, user %p, isGuest %p stub!\n", iface, user, isGuest );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, isGuest %p.\n", iface, user, isGuest );
+
+    if (!isGuest) return E_INVALIDARG;
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    /* AllowGuests is honored at the option-validation level in
+     * XUserAddAsync; the synthesized default user itself is never a guest. */
+    *isGuest = FALSE;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserGetState( IXUserImpl6 *iface, XUserHandle user, XUserState *state )
 {
-    FIXME( "iface %p, user %p, state %p stub!\n", iface, user, state );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, state %p.\n", iface, user, state );
+
+    if (!state) return E_INVALIDARG;
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    *state = XUserState_SignedIn;
+    return S_OK;
 }
 
 static HRESULT WINAPI __PADDING__( IXUserImpl6 *iface )
@@ -179,14 +368,34 @@ static HRESULT WINAPI x_user_XUserGetGamerPictureResult( IXUserImpl6 *iface, XAs
 
 static HRESULT WINAPI x_user_XUserGetAgeGroup( IXUserImpl6 *iface, XUserHandle user, XUserAgeGroup *ageGroup )
 {
-    FIXME( "iface %p, user %p, ageGroup %p stub!\n", iface, user, ageGroup );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, ageGroup %p.\n", iface, user, ageGroup );
+
+    if (!ageGroup) return E_INVALIDARG;
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    /* No real Xbox Live profile/parental-controls data exists on this
+     * build; reporting Adult is the documented value that never triggers
+     * age-gated content restrictions, which is the safe default for a
+     * locally-signed-in single-player user. */
+    *ageGroup = XUserAgeGroup_Adult;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserCheckPrivilege( IXUserImpl6 *iface, XUserHandle user, XUserPrivilegeOptions options, XUserPrivilege privilege, BOOLEAN *hasPrivilege, XUserPrivilegeDenyReason *reason )
 {
-    FIXME( "iface %p, user %p, options %d, privilege %d, hasPrivilege %p, reason %p stub!\n", iface, user, options, privilege, hasPrivilege, reason );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, options %#x, privilege %d, hasPrivilege %p, reason %p.\n",
+           iface, user, (unsigned int)options, privilege, hasPrivilege, reason );
+
+    if (!hasPrivilege) return E_INVALIDARG;
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    /* No real Xbox Live entitlement/parental-controls service exists on
+     * this build to evaluate privileges against, so every privilege is
+     * granted unconditionally - the safe choice for an offline single local
+     * user rather than blocking gameplay on an unimplemented check. */
+    *hasPrivilege = TRUE;
+    if (reason) *reason = XUserPrivilegeDenyReason_None;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserResolvePrivilegeWithUiAsync( IXUserImpl6 *iface, XUserHandle user, XUserPrivilegeOptions options, XUserPrivilege privilege, XAsyncBlock *async )
@@ -448,8 +657,25 @@ static ULONG WINAPI x_user_gamertag_Release( IXUserGamertagImpl *iface )
 
 static HRESULT WINAPI x_user_gamertag_XUserGetGamertag( IXUserGamertagImpl *iface, XUserHandle user, XUserGamertagComponent gamertagComponent, SIZE_T gamertagSize, char *gamertag, SIZE_T *gamertagUsed )
 {
-    FIXME( "iface %p, user %p, gamertagComponent %d, gamertagSize %Iu, gamertag %p, gamertagUsed %p stub!\n", iface, user, gamertagComponent, gamertagSize, gamertag, gamertagUsed );
-    return E_NOTIMPL;
+    static const char name[] = "Player";
+    SIZE_T len = sizeof(name);
+
+    TRACE( "iface %p, user %p, gamertagComponent %d, gamertagSize %Iu, gamertag %p, gamertagUsed %p.\n",
+           iface, user, gamertagComponent, gamertagSize, gamertag, gamertagUsed );
+
+    if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
+
+    if (gamertagUsed) *gamertagUsed = len;
+    if (!gamertag) return E_INVALIDARG;
+    if (gamertagSize < len) return E_NOT_SUFFICIENT_BUFFER;
+
+    /* No real Xbox Live profile exists on this build to source a gamertag
+     * from; the same placeholder is returned for every documented
+     * component (Classic/Modern/ModernSuffix/UniqueModern) - titles that
+     * only display the string work, at the cost of not distinguishing
+     * components that real accounts would render differently. */
+    memcpy( gamertag, name, len );
+    return S_OK;
 }
 
 static const struct IXUserGamertagImplVtbl x_user_gamertag_vtbl =
