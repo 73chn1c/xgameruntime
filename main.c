@@ -68,13 +68,8 @@ HRESULT WINAPI InitializeApiImpl( ULONG gdkVer, ULONG gsVer )
 
 HRESULT WINAPI UninitializeApiImpl( void )
 {
-    /* Matches Weather-OS/WineGDK's own UninitializeApiImpl (a more mature,
-     * independent implementation of this same private ABI, tested against
-     * a broader range of real GDK titles): E_NOTIMPL rather than S_OK,
-     * since there's genuinely nothing here to tear down yet. Verified live
-     * against Balatro either way - it doesn't check this call's result. */
     TRACE( "()\n" );
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )

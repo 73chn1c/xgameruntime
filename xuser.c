@@ -684,22 +684,96 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResult( IXUserImpl6 *iface
     return hr;
 }
 
+static const char token_sig_utf16_identity[] = "XUserGetTokenAndSignatureUtf16Async";
+
+struct x_user_token_sig_utf16_state
+{
+    WCHAR *token;
+    SIZE_T tokenSize;
+    WCHAR *signature;
+    SIZE_T signatureSize;
+};
+
+static HRESULT CALLBACK x_user_token_sig_utf16_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    struct x_user_token_sig_utf16_state *state = data->context;
+
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, sizeof(XUserGetTokenAndSignatureUtf16Data) + state->tokenSize + state->signatureSize );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+    {
+        XUserGetTokenAndSignatureUtf16Data *out;
+        SIZE_T need = sizeof(*out) + state->tokenSize + state->signatureSize;
+        WCHAR *strings;
+
+        if (data->bufferSize < need) return E_NOT_SUFFICIENT_BUFFER;
+        out = data->buffer;
+        strings = (WCHAR *)((char *)data->buffer + sizeof(*out));
+        memcpy( strings, state->token, state->tokenSize );
+        memcpy( (char *)strings + state->tokenSize, state->signature, state->signatureSize );
+        out->tokenCount = state->tokenSize / sizeof(WCHAR);
+        out->signatureCount = state->signatureSize / sizeof(WCHAR);
+        out->token = strings;
+        out->signature = (WCHAR *)((char *)strings + state->tokenSize);
+        return S_OK;
+    }
+
+    case XAsyncOp_Cleanup:
+        free( state->token );
+        free( state->signature );
+        free( state );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Async( IXUserImpl6 *iface, XUserHandle user, XUserGetTokenAndSignatureOptions options, const WCHAR *method, const WCHAR *url, SIZE_T headerCount, const XUserGetTokenAndSignatureUtf16HttpHeader *headers, SIZE_T bodySize, const void *bodyBuffer, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, headers %p, bodySize %Iu, bodyBuffer %p, async %p stub!\n", iface, user, options, debugstr_w( method ), debugstr_w( url ), headerCount, headers, bodySize, bodyBuffer, async );
-    return E_NOTIMPL;
+    struct x_user_token_sig_utf16_state *state;
+    HRESULT hr;
+
+    TRACE( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, headers %p, bodySize %Iu, bodyBuffer %p, async %p\n", iface, user, options, debugstr_w( method ), debugstr_w( url ), headerCount, headers, bodySize, bodyBuffer, async );
+    if (!async) return E_INVALIDARG;
+
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
+
+    state->token = _wcsdup( L"Bearer MockToken" );
+    state->tokenSize = (wcslen( state->token ) + 1) * sizeof(WCHAR);
+    state->signature = _wcsdup( L"MockSignature" );
+    state->signatureSize = (wcslen( state->signature ) + 1) * sizeof(WCHAR);
+
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &token_sig_utf16_identity, "XUserGetTokenAndSignatureUtf16Async", x_user_token_sig_utf16_provider )))
+    {
+        free( state->token );
+        free( state->signature );
+        free( state );
+    }
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16ResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
 {
-    FIXME( "iface %p, async %p, bufferSize %p stub!\n", iface, async, bufferSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, bufferSize %p.\n", iface, async, bufferSize );
+    if (!async || !bufferSize) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResultSize( x_threading_impl, async, bufferSize );
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Result( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T bufferSize, void *buffer, XUserGetTokenAndSignatureUtf16Data **ptrToBuffer, SIZE_T *bufferUsed )
 {
-    FIXME( "iface %p, async %p, bufferSize %Iu, buffer %p, ptrToBuffer %p, bufferUsed %p stub!\n", iface, async, bufferSize, buffer, ptrToBuffer, bufferUsed );
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, bufferSize %Iu, buffer %p, ptrToBuffer %p, bufferUsed %p.\n", iface, async, bufferSize, buffer, ptrToBuffer, bufferUsed );
+    if (!async || !buffer) return E_INVALIDARG;
+
+    hr = IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &token_sig_utf16_identity, bufferSize, buffer, bufferUsed );
+    if (SUCCEEDED(hr) && ptrToBuffer) *ptrToBuffer = buffer;
+    return hr;
 }
 
 static HRESULT WINAPI x_user_XUserResolveIssueWithUiAsync( IXUserImpl6 *iface, XUserHandle user, const char *url, XAsyncBlock *async )
