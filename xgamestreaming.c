@@ -72,18 +72,18 @@ static ULONG WINAPI x_game_streaming_Release( IXGameStreamingImpl3 *iface )
 
 static HRESULT WINAPI x_game_streaming_XGameStreamingInitialize( IXGameStreamingImpl3 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
-    return E_NOTIMPL;
+    TRACE( "iface %p\n", iface );
+    return S_OK;
 }
 
 static void WINAPI x_game_streaming_XGameStreamingUninitialize( IXGameStreamingImpl3 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
+    TRACE( "iface %p\n", iface );
 }
 
 static BOOLEAN WINAPI x_game_streaming_XGameStreamingIsStreaming( IXGameStreamingImpl3 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
+    TRACE( "iface %p\n", iface );
     return FALSE;
 }
 
