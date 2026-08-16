@@ -71,6 +71,11 @@ static ULONG WINAPI x_game_save_Release( IXGameSaveImpl3 *iface )
 }
 
 static const char x_game_save_init_identity[] = "XGameSaveInitializeProviderAsync";
+static const char x_game_save_quota_identity[] = "XGameSaveGetRemainingQuotaAsync";
+static const char x_game_save_submit_identity[] = "XGameSaveSubmitUpdateAsync";
+static const char x_game_save_delete_identity[] = "XGameSaveDeleteContainerAsync";
+static const char x_game_save_read_identity[] = "XGameSaveReadBlobDataAsync";
+static const char x_game_save_folder_identity[] = "XGameSaveFilesGetFolderWithUiAsync";
 
 struct x_game_save_init_state
 {
@@ -94,6 +99,43 @@ static HRESULT CALLBACK x_game_save_init_provider( XAsyncOp op, const XAsyncProv
 
     case XAsyncOp_Cleanup:
         free( state );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
+static HRESULT CALLBACK x_game_save_quota_cb( XAsyncOp op, const XAsyncProviderData *data )
+{
+    INT64 *quota = data->context;
+
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, sizeof(INT64) );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+        if (data->bufferSize < sizeof(INT64)) return E_NOT_SUFFICIENT_BUFFER;
+        *(INT64 *)data->buffer = *quota;
+        return S_OK;
+
+    case XAsyncOp_Cleanup:
+        free( quota );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
+static HRESULT CALLBACK x_game_save_generic_cb( XAsyncOp op, const XAsyncProviderData *data )
+{
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, 0 );
         return S_OK;
 
     default:
@@ -141,44 +183,57 @@ static HRESULT WINAPI x_game_save_XGameSaveGetRemainingQuota( IXGameSaveImpl3 *i
 {
     TRACE( "iface %p, provider %p, remainingQuota %p\n", iface, provider, remainingQuota );
     if (!remainingQuota) return E_POINTER;
-    *remainingQuota = 1024 * 1024 * 1024; /* 1 GB */
+    *remainingQuota = 1024LL * 1024LL * 1024LL * 10LL; // 10 GB
     return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveGetRemainingQuotaAsync( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, XAsyncBlock *async )
 {
-    FIXME( "iface %p, provider %p, async %p stub!\n", iface, provider, async );
-    return E_NOTIMPL;
+    INT64 *state;
+    HRESULT hr;
+
+    TRACE( "iface %p, provider %p, async %p\n", iface, provider, async );
+    if (!async) return E_INVALIDARG;
+
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
+    *state = 1024LL * 1024LL * 1024LL * 10LL;
+
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &x_game_save_quota_identity, "XGameSaveGetRemainingQuotaAsync", x_game_save_quota_cb )))
+        free( state );
+    return hr;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveGetRemainingQuotaResult( IXGameSaveImpl3 *iface, XAsyncBlock *async, INT64 *remainingQuota )
 {
-    FIXME( "iface %p, async %p, remainingQuota %p stub!\n", iface, async, remainingQuota );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, remainingQuota %p\n", iface, async, remainingQuota );
+    if (!async || !remainingQuota) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_quota_identity, sizeof(*remainingQuota), remainingQuota, NULL );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveDeleteContainer( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, const char *containerName )
 {
-    FIXME( "iface %p, provider %p, containerName %s stub!\n", iface, provider, debugstr_a( containerName ) );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, containerName %s\n", iface, provider, debugstr_a( containerName ) );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveDeleteContainerAsync( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, const char *containerName, XAsyncBlock *async )
 {
-    FIXME( "iface %p, provider %p, containerName %s, async %p stub!\n", iface, provider, debugstr_a( containerName ), async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, containerName %s, async %p\n", iface, provider, debugstr_a( containerName ), async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &x_game_save_delete_identity, "XGameSaveDeleteContainerAsync", x_game_save_generic_cb );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveDeleteContainerResult( IXGameSaveImpl3 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_delete_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveGetContainerInfo( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, const char *containerName, void *context, XGameSaveContainerInfoCallback *callback )
 {
-    FIXME( "iface %p, provider %p, containerName %s, context %p, callback %p stub!\n", iface, provider, debugstr_a( containerName ), context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, containerName %s, context %p, callback %p\n", iface, provider, debugstr_a( containerName ), context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateContainerInfo( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, void *context, XGameSaveContainerInfoCallback *callback )
@@ -220,79 +275,91 @@ static HRESULT WINAPI x_game_save_XGameSaveEnumerateBlobInfoByName( IXGameSaveIm
 
 static HRESULT WINAPI x_game_save_XGameSaveReadBlobData( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char **blobNames, UINT32 *countOfBlobs, SIZE_T blobsSize, XGameSaveBlob *blobData )
 {
-    FIXME( "iface %p, container %p, blobNames %p, countOfBlobs %p, blobsSize %Iu, provider %p stub!\n", iface, container, blobNames, countOfBlobs, blobsSize, blobData );
-    return E_NOTIMPL;
+    TRACE( "iface %p, container %p, blobNames %p, countOfBlobs %p, blobsSize %Iu, blobData %p\n", iface, container, blobNames, countOfBlobs, blobsSize, blobData );
+    if (countOfBlobs) *countOfBlobs = 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveReadBlobDataAsync( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char **blobNames, UINT32 countOfBlobs, XAsyncBlock *async )
 {
-    FIXME( "iface %p, container %p, blobNames %p, countOfBlobs %u, async %p stub!\n", iface, container, blobNames, countOfBlobs, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, container %p, blobNames %p, countOfBlobs %u, async %p\n", iface, container, blobNames, countOfBlobs, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &x_game_save_read_identity, "XGameSaveReadBlobDataAsync", x_game_save_generic_cb );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveReadBlobDataResult( IXGameSaveImpl3 *iface, XAsyncBlock *async, SIZE_T blobsSize, XGameSaveBlob *blobData, UINT32 *countOfBlobs )
 {
-    FIXME( "iface %p, async %p, blobsSize %Iu, blobData %p, countOfBlobs %p stub!\n", iface, async, blobsSize, blobData, countOfBlobs );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, blobsSize %Iu, blobData %p, countOfBlobs %p\n", iface, async, blobsSize, blobData, countOfBlobs );
+    if (countOfBlobs) *countOfBlobs = 0;
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_read_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveCreateUpdate( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char *containerDisplayName, XGameSaveUpdateHandle *updateContext )
 {
-    FIXME( "iface %p, container %p, containerDisplayName %s, updateContext %p stub!\n", iface, container, debugstr_a( containerDisplayName ), updateContext );
-    return E_NOTIMPL;
+    TRACE( "iface %p, container %p, containerDisplayName %s, updateContext %p\n", iface, container, debugstr_a( containerDisplayName ), updateContext );
+    if (!updateContext) return E_POINTER;
+    *updateContext = (XGameSaveUpdateHandle)0x5001;
+    return S_OK;
 }
 
 static void WINAPI x_game_save_XGameSaveCloseUpdate( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle context )
 {
-    FIXME( "iface %p, context %p stub!\n", iface, context );
+    TRACE( "iface %p, context %p\n", iface, context );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitBlobWrite( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext, const char *blobName, UINT8 *data, SIZE_T byteCount )
 {
-    FIXME( "iface %p, updateContext %p, blobName %s, data %p, byteCount %Iu stub!\n", iface, updateContext, debugstr_a( blobName ), data, byteCount );
-    return E_NOTIMPL;
+    TRACE( "iface %p, updateContext %p, blobName %s, data %p, byteCount %Iu\n", iface, updateContext, debugstr_a( blobName ), data, byteCount );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitBlobDelete( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext, const char *blobName )
 {
-    FIXME( "iface %p, updateContext %p, blobName %s stub!\n", iface, updateContext, debugstr_a( blobName ) );
-    return E_NOTIMPL;
+    TRACE( "iface %p, updateContext %p, blobName %s\n", iface, updateContext, debugstr_a( blobName ) );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitUpdate( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext )
 {
-    FIXME( "iface %p, updateContext %p stub!\n", iface, updateContext );
-    return E_NOTIMPL;
+    TRACE( "iface %p, updateContext %p\n", iface, updateContext );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitUpdateAsync( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext, XAsyncBlock *async )
 {
-    FIXME( "iface %p, updateContext %p, async %p stub!\n", iface, updateContext, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, updateContext %p, async %p\n", iface, updateContext, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &x_game_save_submit_identity, "XGameSaveSubmitUpdateAsync", x_game_save_generic_cb );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitUpdateResult( IXGameSaveImpl3 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_submit_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveFilesGetFolderWithUiAsync( IXGameSaveImpl3 *iface, XUserHandle requestingUser, const char *configurationId, XAsyncBlock *async )
 {
-    FIXME( "iface %p, requestingUser %p, configurationId %s, async %p stub!\n", iface, requestingUser, debugstr_a( configurationId ), async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, requestingUser %p, configurationId %s, async %p\n", iface, requestingUser, debugstr_a( configurationId ), async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &x_game_save_folder_identity, "XGameSaveFilesGetFolderWithUiAsync", x_game_save_generic_cb );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveFilesGetFolderWithUiResult( IXGameSaveImpl3 *iface, XAsyncBlock *async, SIZE_T folderSize, char *folderResult )
 {
-    FIXME( "iface %p, async %p, folderSize %Iu, folderResult %p stub!\n", iface, async, folderSize, folderResult );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, folderSize %Iu, folderResult %p\n", iface, async, folderSize, folderResult );
+    if (folderResult && folderSize > 0) folderResult[0] = '\0';
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_folder_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveFilesGetRemainingQuota( IXGameSaveImpl3 *iface, XUserHandle userContext, const char *configurationId, INT64 *remainingQuota )
 {
-    FIXME( "iface %p, userContext %p, configurationId %s, remainingQuota %p stub!\n", iface, userContext, debugstr_a( configurationId ), remainingQuota );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userContext %p, configurationId %s, remainingQuota %p\n", iface, userContext, debugstr_a( configurationId ), remainingQuota );
+    if (remainingQuota) *remainingQuota = 1024LL * 1024LL * 1024LL * 10LL;
+    return S_OK;
 }
 
 static const struct IXGameSaveImpl3Vtbl x_game_save_vtbl =
@@ -331,6 +398,7 @@ static const struct IXGameSaveImpl3Vtbl x_game_save_vtbl =
     /* IXGameSaveImpl2 methods */
     x_game_save_XGameSaveFilesGetFolderWithUiAsync,
     x_game_save_XGameSaveFilesGetFolderWithUiResult,
+    /* IXGameSaveImpl3 methods */
     x_game_save_XGameSaveFilesGetRemainingQuota,
 };
 
