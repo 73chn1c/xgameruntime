@@ -110,20 +110,23 @@ static HRESULT WINAPI capture_XAppCaptureCloseScreenshotStream( IXAppCaptureImpl
 
 static HRESULT WINAPI capture_XAppCaptureEnableRecord( IXAppCaptureImpl4 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
-    return E_NOTIMPL;
+    TRACE( "iface %p\n", iface );
+    return S_OK;
 }
 
 static HRESULT WINAPI capture_XAppCaptureDisableRecord( IXAppCaptureImpl4 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
-    return E_NOTIMPL;
+    TRACE( "iface %p\n", iface );
+    return S_OK;
 }
 
 static HRESULT WINAPI capture_XAppCaptureGetVideoCaptureSettings( IXAppCaptureImpl4 *iface, XAppCaptureVideoCaptureSettings *userCaptureSettings )
 {
-    FIXME( "iface %p, userCaptureSettings %p stub!\n", iface, userCaptureSettings );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userCaptureSettings %p\n", iface, userCaptureSettings );
+    if (!userCaptureSettings) return E_INVALIDARG;
+    memset( userCaptureSettings, 0, sizeof(*userCaptureSettings) );
+    userCaptureSettings->isCaptureByGamesAllowed = TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI capture_XAppCaptureRecordTimespan( IXAppCaptureImpl4 *iface, const SYSTEMTIME *startTimestamp, UINT64 durationInMilliseconds, XAppCaptureLocalResult *result )
