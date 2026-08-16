@@ -72,20 +72,36 @@ static ULONG WINAPI x_persistent_local_storage_Release( IXPersistentLocalStorage
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPath( IXPersistentLocalStorageImpl3 *iface, SIZE_T pathSize, char *path, SIZE_T *pathUsed )
 {
-    FIXME( "iface %p, pathSize %Iu, path %p, pathUsed %p stub!\n", iface, pathSize, path, pathUsed );
-    return E_NOTIMPL;
+    static const char storagePath[] = "C:\\users\\steamuser\\AppData\\Local\\PersistentStorage";
+    SIZE_T len = strlen( storagePath ) + 1;
+
+    TRACE( "iface %p, pathSize %Iu, path %p, pathUsed %p\n", iface, pathSize, path, pathUsed );
+    if (!path) return E_INVALIDARG;
+
+    if (pathUsed) *pathUsed = len;
+    if (pathSize < len) return E_NOT_SUFFICIENT_BUFFER;
+
+    memcpy( path, storagePath, len );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPathSize( IXPersistentLocalStorageImpl3 *iface, SIZE_T *pathSize )
 {
-    FIXME( "iface %p, pathSize %p stub!\n", iface, pathSize );
-    return E_NOTIMPL;
+    static const char storagePath[] = "C:\\users\\steamuser\\AppData\\Local\\PersistentStorage";
+
+    TRACE( "iface %p, pathSize %p\n", iface, pathSize );
+    if (!pathSize) return E_INVALIDARG;
+    *pathSize = strlen( storagePath ) + 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetSpaceInfo( IXPersistentLocalStorageImpl3 *iface, XPersistentLocalStorageSpaceInfo *info )
 {
-    FIXME( "iface %p, info %p stub!\n", iface, info );
-    return E_NOTIMPL;
+    TRACE( "iface %p, info %p\n", iface, info );
+    if (!info) return E_INVALIDARG;
+    info->usedBytes = 0;
+    info->totalBytes = 10ULL * 1024 * 1024 * 1024;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageMountForPackage( IXPersistentLocalStorageImpl3 *iface, const char *packageIdentifier, XPackageMountHandle *mountHandle )
