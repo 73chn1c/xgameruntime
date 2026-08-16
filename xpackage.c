@@ -118,8 +118,12 @@ static BOOLEAN WINAPI x_package_XPackageUnregisterInstallationProgressChanged( I
 
 static HRESULT WINAPI x_package_XPackageGetUserLocale( IXPackageImpl3 *iface, SIZE_T localeSize, char *locale )
 {
-    FIXME( "iface %p, localeSize %Iu, locale %p stub!\n", iface, localeSize, locale );
-    return E_NOTIMPL;
+    const char *loc = "pl-PL";
+    TRACE( "iface %p, localeSize %Iu, locale %p\n", iface, localeSize, locale );
+    if (!locale) return E_POINTER;
+    if (localeSize < strlen(loc) + 1) return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
+    strcpy_s( locale, localeSize, loc );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageFindChunkAvailability( IXPackageImpl3 *iface, const char *packageIdentifier, UINT32 selectorCount, XPackageChunkSelector *selectors, XPackageChunkAvailability *availability )
@@ -219,8 +223,8 @@ static HRESULT WINAPI __PADDING_4__( IXPackageImpl3 *iface )
 
 static HRESULT WINAPI x_package_XPackageEnumeratePackages( IXPackageImpl3 *iface, XPackageKind kind, XPackageEnumerationScope scope, void *context, XPackageEnumerationCallback *callback )
 {
-    FIXME( "iface %p, kind %d, scope %d, context %p, callback %p stub!\n", iface, kind, scope, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, kind %d, scope %d, context %p, callback %p\n", iface, kind, scope, context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageRegisterPackageInstalled( IXPackageImpl3 *iface, XTaskQueueHandle queue, void *context, XPackageInstalledCallback *callback, XTaskQueueRegistrationToken *token )
@@ -261,8 +265,8 @@ static BOOLEAN WINAPI x_package_XPackageUninstallPackage( IXPackageImpl3 *iface,
 
 static HRESULT WINAPI x_package_XPackageEnumeratePackages2( IXPackageImpl3 *iface, XPackageKind kind, XPackageEnumerationScope scope, void *context, XPackageEnumerationCallback *callback )
 {
-    FIXME( "iface %p, kind %d, scope %d, context %p, callback %p stub!\n", iface, kind, scope, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, kind %d, scope %d, context %p, callback %p\n", iface, kind, scope, context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageRegisterPackageInstalled2( IXPackageImpl3 *iface, XTaskQueueHandle queue, void *context, XPackageInstalledCallback *callback, XTaskQueueRegistrationToken *token )

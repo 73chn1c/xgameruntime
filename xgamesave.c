@@ -70,33 +70,79 @@ static ULONG WINAPI x_game_save_Release( IXGameSaveImpl3 *iface )
     return ref;
 }
 
+static const char x_game_save_init_identity[] = "XGameSaveInitializeProviderAsync";
+
+struct x_game_save_init_state
+{
+    XGameSaveProviderHandle provider;
+};
+
+static HRESULT CALLBACK x_game_save_init_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    struct x_game_save_init_state *state = data->context;
+
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, sizeof(XGameSaveProviderHandle) );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+        if (data->bufferSize < sizeof(XGameSaveProviderHandle)) return E_NOT_SUFFICIENT_BUFFER;
+        *(XGameSaveProviderHandle *)data->buffer = state->provider;
+        return S_OK;
+
+    case XAsyncOp_Cleanup:
+        free( state );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_game_save_XGameSaveInitializeProvider( IXGameSaveImpl3 *iface, XUserHandle requestingUser, const char *configurationId, BOOLEAN syncOnDemand, XGameSaveProviderHandle *provider )
 {
-    FIXME( "iface %p, requestingUser %p, configurationId %s, syncOnDemand %d, provider %p stub!\n", iface, requestingUser, debugstr_a( configurationId ), syncOnDemand, provider );
-    return E_NOTIMPL;
+    TRACE( "iface %p, requestingUser %p, configurationId %s, syncOnDemand %d, provider %p\n", iface, requestingUser, debugstr_a( configurationId ), syncOnDemand, provider );
+    if (!provider) return E_POINTER;
+    *provider = (XGameSaveProviderHandle)0x3001;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveInitializeProviderAsync( IXGameSaveImpl3 *iface, XUserHandle requestingUser, const char *configurationId, BOOLEAN syncOnDemand, XAsyncBlock *async )
 {
-    FIXME( "iface %p, requestingUser %p, configurationId %s, syncOnDemand %d, async %p stub!\n", iface, requestingUser, debugstr_a( configurationId ), syncOnDemand, async );
-    return E_NOTIMPL;
+    struct x_game_save_init_state *state;
+    HRESULT hr;
+
+    TRACE( "iface %p, requestingUser %p, configurationId %s, syncOnDemand %d, async %p\n", iface, requestingUser, debugstr_a( configurationId ), syncOnDemand, async );
+    if (!async) return E_INVALIDARG;
+
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
+    state->provider = (XGameSaveProviderHandle)0x3001;
+
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &x_game_save_init_identity, "XGameSaveInitializeProviderAsync", x_game_save_init_provider )))
+        free( state );
+    return hr;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveInitializeProviderResult( IXGameSaveImpl3 *iface, XAsyncBlock *async, XGameSaveProviderHandle *provider )
 {
-    FIXME( "iface %p, async %p, provider %p stub!\n", iface, async, provider );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, provider %p\n", iface, async, provider );
+    if (!async || !provider) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &x_game_save_init_identity, sizeof(*provider), provider, NULL );
 }
 
 static void WINAPI x_game_save_XGameSaveCloseProvider( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider )
 {
-    FIXME( "iface %p, provider %p stub!\n", iface, provider );
+    TRACE( "iface %p, provider %p\n", iface, provider );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveGetRemainingQuota( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, INT64 *remainingQuota )
 {
-    FIXME( "iface %p, provider %p, remainingQuota %p stub!\n", iface, provider, remainingQuota );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, remainingQuota %p\n", iface, provider, remainingQuota );
+    if (!remainingQuota) return E_POINTER;
+    *remainingQuota = 1024 * 1024 * 1024; /* 1 GB */
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveGetRemainingQuotaAsync( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, XAsyncBlock *async )
