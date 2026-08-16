@@ -70,13 +70,14 @@ static ULONG WINAPI x_game_protocol_Release( IXGameProtocolImpl *iface )
 
 static HRESULT WINAPI x_game_protocol_XGameProtocolRegisterForActivation( IXGameProtocolImpl *iface, XTaskQueueHandle queue, void *context, XGameProtocolActivationCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    TRACE( "iface %p, queue %p, context %p, callback %p, token %p\n", iface, queue, context, callback, token );
+    if (token) token->token = 1;
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_game_protocol_XGameProtocolUnregisterForActivation( IXGameProtocolImpl *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
-    FIXME( "iface %p, token %p, wait %d stub!\n", iface, &token, wait );
+    TRACE( "iface %p, token %p, wait %d\n", iface, &token, wait );
     return TRUE;
 }
 
