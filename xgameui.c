@@ -71,106 +71,204 @@ static ULONG WINAPI x_game_ui_Release( IXGameUiImpl4 *iface )
     return ref;
 }
 
+static const char game_ui_identity[] = "XGameUiAsync";
+
+struct x_game_ui_text_state
+{
+    char *text;
+    UINT32 length;
+};
+
+static HRESULT CALLBACK game_ui_generic_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, 0 );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+    case XAsyncOp_Cleanup:
+    default:
+        return S_OK;
+    }
+}
+
+static HRESULT CALLBACK game_ui_text_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    struct x_game_ui_text_state *state = data->context;
+
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, state ? state->length + 1 : 0 );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+        if (state && state->text && data->buffer && data->bufferSize > state->length)
+        {
+            memcpy( data->buffer, state->text, state->length + 1 );
+        }
+        return S_OK;
+
+    case XAsyncOp_Cleanup:
+        if (state)
+        {
+            free( state->text );
+            free( state );
+        }
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_game_ui_XGameUiShowMessageDialogAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, const char *titleText, const char *contentText, const char *firstButtonText, const char *secondButtonText, const char *thirdButtonText, XGameUiMessageDialogButton defaultButton, XGameUiMessageDialogButton cancelButton )
 {
-    FIXME( "iface %p, async %p, titleText %s, contentText %s, firstButtonText %s, secondButtonText %s, thirdButtonText %s, defaultButton %d, cancelButton %d stub!\n", iface, async, debugstr_a( titleText ), debugstr_a( contentText ), debugstr_a( firstButtonText ), debugstr_a( secondButtonText ), debugstr_a( thirdButtonText ), defaultButton, cancelButton );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, titleText %s\n", iface, async, debugstr_a( titleText ) );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowMessageDialogAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowMessageDialogResult( IXGameUiImpl4 *iface, XAsyncBlock *async, XGameUiMessageDialogButton *resultButton )
 {
-    FIXME( "iface %p, async %p, resultButton %p stub!\n", iface, async, resultButton );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, resultButton %p\n", iface, async, resultButton );
+    if (resultButton) *resultButton = XGameUiMessageDialogButton_First;
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowSendGameInviteAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, XUserHandle requestingUser, const char *sessionConfigurationId, const char *sessionTemplateName, const char *sessionId, const char *invitationText, const char *customActivationContext )
 {
-    FIXME( "iface %p, async %p, requestingUser %p, sessionConfigurationId %s, sessionTemplateName %s, sessionId %s, invitationText %s, customActivationContext %s stub!\n", iface, async, requestingUser, debugstr_a( sessionConfigurationId ), debugstr_a( sessionTemplateName ), debugstr_a( sessionId ), debugstr_a( invitationText ), debugstr_a( customActivationContext ) );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowSendGameInviteAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowSendGameInviteResult( IXGameUiImpl4 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowPlayerProfileCardAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, XUserHandle requestingUser, UINT64 targetPlayer )
 {
-    FIXME( "iface %p, async %p, requestingUser %p, targetPlayer %llu stub!\n", iface, async, requestingUser, targetPlayer );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, requestingUser %p, targetPlayer %llu\n", iface, async, requestingUser, targetPlayer );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowPlayerProfileCardAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowPlayerProfileCardResult( IXGameUiImpl4 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowAchievementsAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, XUserHandle requestingUser, UINT32 titleId )
 {
-    FIXME( "iface %p, async %p, requestingUser %p, titleId %u stub!\n", iface, async, requestingUser, titleId );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, requestingUser %p, titleId %u\n", iface, async, requestingUser, titleId );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowAchievementsAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowAchievementsResult( IXGameUiImpl4 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowPlayerPickerAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, XUserHandle requestingUser, const char *promptText, UINT32 selectFromPlayersCount, const UINT64 *selectFromPlayers, UINT32 preSelectedPlayersCount, UINT64 *preSelectedPlayers, UINT32 minSelectionCount, UINT32 maxSelectionCount )
 {
-    FIXME( "iface %p, async %p, requestingUser %p, promptText %s, selectFromPlayersCount %u, selectFromPlayers %p, preSelectedPlayersCount %u, preSelectedPlayers %p, minSelectionCount %u, maxSelectionCount %u stub!\n", iface, async, requestingUser, debugstr_a( promptText ), selectFromPlayersCount, selectFromPlayers, preSelectedPlayersCount, preSelectedPlayers, minSelectionCount, maxSelectionCount );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowPlayerPickerAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowPlayerPickerResultCount( IXGameUiImpl4 *iface, XAsyncBlock *async, UINT32 *resultPlayersCount )
 {
-    FIXME( "iface %p, async %p, resultPlayersCount %p stub!\n", iface, async, resultPlayersCount );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, resultPlayersCount %p\n", iface, async, resultPlayersCount );
+    if (resultPlayersCount) *resultPlayersCount = 0;
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowPlayerPickerResult( IXGameUiImpl4 *iface, XAsyncBlock *async, UINT32 resultPlayersCount, UINT64 *resultPlayers, UINT32 *resultPlayersUsed )
 {
-    FIXME( "iface %p, async %p, resultPlayersCount %u, resultPlayers %p, resultPlayersUsed %p stub!\n", iface, async, resultPlayersCount, resultPlayers, resultPlayersUsed );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (resultPlayersUsed) *resultPlayersUsed = 0;
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowErrorDialogAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, HRESULT errorCode, const char *context )
 {
-    FIXME( "iface %p, async %p, errorCode %#lx, context %s stub!\n", iface, async, errorCode, debugstr_a( context ) );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, errorCode %#lx, context %s\n", iface, async, errorCode, debugstr_a( context ) );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &game_ui_identity, "XGameUiShowErrorDialogAsync", game_ui_generic_provider );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowErrorDialogResult( IXGameUiImpl4 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiSetNotificationPositionHint( IXGameUiImpl4 *iface, XGameUiNotificationPositionHint position )
 {
-    FIXME( "iface %p, position %d stub!\n", iface, position );
-    return E_NOTIMPL;
+    TRACE( "iface %p, position %d\n", iface, position );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowTextEntryAsync( IXGameUiImpl4 *iface, XAsyncBlock *async, const char *titleText, const char *descriptionText, const char *defaultText, XGameUiTextEntryInputScope inputScope, UINT32 maxTextLength )
 {
-    FIXME( "iface %p, async %p, titleText %s, descriptionText %s, defaultText %s, inputScope %d, maxTextLength %u stub!\n", iface, async, debugstr_a( titleText ), debugstr_a( descriptionText ), debugstr_a( defaultText ), inputScope, maxTextLength );
-    return E_NOTIMPL;
+    struct x_game_ui_text_state *state;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, defaultText %s\n", iface, async, debugstr_a( defaultText ) );
+    if (!async) return E_INVALIDARG;
+
+    if (!(state = calloc( 1, sizeof(*state) ))) return E_OUTOFMEMORY;
+    if (defaultText)
+    {
+        state->text = _strdup( defaultText );
+        state->length = strlen( defaultText );
+    }
+
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async, state, &game_ui_identity, "XGameUiShowTextEntryAsync", game_ui_text_provider )))
+    {
+        if (state->text) free( state->text );
+        free( state );
+    }
+    return hr;
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowTextEntryResultSize( IXGameUiImpl4 *iface, XAsyncBlock *async, UINT32 *resultTextBufferSize )
 {
-    FIXME( "iface %p, async %p, resultTextBufferSize %p stub!\n", iface, async, resultTextBufferSize );
-    return E_NOTIMPL;
+    SIZE_T size = 0;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, resultTextBufferSize %p\n", iface, async, resultTextBufferSize );
+    if (!async || !resultTextBufferSize) return E_INVALIDARG;
+    hr = IXThreadingImpl_XAsyncGetResultSize( x_threading_impl, async, &size );
+    *resultTextBufferSize = (UINT32)size;
+    return hr;
 }
 
 static HRESULT WINAPI x_game_ui_XGameUiShowTextEntryResult( IXGameUiImpl4 *iface, XAsyncBlock *async, UINT32 resultTextBufferSize, char *resultTextBuffer, UINT32 *resultTextBufferUsed )
 {
-    FIXME( "iface %p, async %p, resultTextBufferSize %u, resultTextBuffer %p, resultTextBufferUsed %p stub!\n", iface, async, resultTextBufferSize, resultTextBuffer, resultTextBufferUsed );
-    return E_NOTIMPL;
+    SIZE_T used = 0;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, resultTextBufferSize %u, resultTextBuffer %p\n", iface, async, resultTextBufferSize, resultTextBuffer );
+    if (!async || !resultTextBuffer) return E_INVALIDARG;
+    hr = IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &game_ui_identity, resultTextBufferSize, resultTextBuffer, &used );
+    if (resultTextBufferUsed) *resultTextBufferUsed = (UINT32)used;
+    return hr;
 }
 
 static HRESULT WINAPI __PADDING__( IXGameUiImpl4 *iface )

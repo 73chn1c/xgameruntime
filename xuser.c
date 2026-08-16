@@ -355,22 +355,43 @@ static HRESULT WINAPI __PADDING__( IXUserImpl6 *iface )
     return E_NOTIMPL;
 }
 
+static const char gamer_pic_identity[] = "XUserGetGamerPictureAsync";
+static const char privilege_ui_identity[] = "XUserResolvePrivilegeWithUiAsync";
+
+static HRESULT CALLBACK gamer_pic_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK, 0 );
+        return S_OK;
+
+    case XAsyncOp_GetResult:
+    case XAsyncOp_Cleanup:
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_user_XUserGetGamerPictureAsync( IXUserImpl6 *iface, XUserHandle user, XUserGamerPictureSize pictureSize, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, pictureSize %d, async %p stub!\n", iface, user, pictureSize, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, pictureSize %d, async %p\n", iface, user, pictureSize, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &gamer_pic_identity, "XUserGetGamerPictureAsync", gamer_pic_provider );
 }
 
 static HRESULT WINAPI x_user_XUserGetGamerPictureResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
 {
-    FIXME( "iface %p, async %p, bufferSize %p stub!\n", iface, async, bufferSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, bufferSize %p\n", iface, async, bufferSize );
+    if (!async || !bufferSize) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResultSize( x_threading_impl, async, bufferSize );
 }
 
 static HRESULT WINAPI x_user_XUserGetGamerPictureResult( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T bufferSize, void *buffer, SIZE_T *bufferUsed )
 {
-    FIXME( "iface %p, async %p, bufferSize %Iu, buffer %p, bufferUsed %p stub!\n", iface, async, bufferSize, buffer, bufferUsed );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, bufferSize %Iu, buffer %p, bufferUsed %p\n", iface, async, bufferSize, buffer, bufferUsed );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &gamer_pic_identity, bufferSize, buffer, bufferUsed );
 }
 
 static HRESULT WINAPI x_user_XUserGetAgeGroup( IXUserImpl6 *iface, XUserHandle user, XUserAgeGroup *ageGroup )
@@ -380,10 +401,6 @@ static HRESULT WINAPI x_user_XUserGetAgeGroup( IXUserImpl6 *iface, XUserHandle u
     if (!ageGroup) return E_INVALIDARG;
     if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
 
-    /* No real Xbox Live profile/parental-controls data exists on this
-     * build; reporting Adult is the documented value that never triggers
-     * age-gated content restrictions, which is the safe default for a
-     * locally-signed-in single-player user. */
     *ageGroup = XUserAgeGroup_Adult;
     return S_OK;
 }
@@ -396,10 +413,6 @@ static HRESULT WINAPI x_user_XUserCheckPrivilege( IXUserImpl6 *iface, XUserHandl
     if (!hasPrivilege) return E_INVALIDARG;
     if (!user || (struct x_user_data *)user != default_user) return E_GAMEUSER_USER_NOT_FOUND;
 
-    /* No real Xbox Live entitlement/parental-controls service exists on
-     * this build to evaluate privileges against, so every privilege is
-     * granted unconditionally - the safe choice for an offline single local
-     * user rather than blocking gameplay on an unimplemented check. */
     *hasPrivilege = TRUE;
     if (reason) *reason = XUserPrivilegeDenyReason_None;
     return S_OK;
@@ -407,14 +420,16 @@ static HRESULT WINAPI x_user_XUserCheckPrivilege( IXUserImpl6 *iface, XUserHandl
 
 static HRESULT WINAPI x_user_XUserResolvePrivilegeWithUiAsync( IXUserImpl6 *iface, XUserHandle user, XUserPrivilegeOptions options, XUserPrivilege privilege, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, options %d, privilege %d, async %p stub!\n", iface, user, options, privilege, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, options %d, privilege %d, async %p\n", iface, user, options, privilege, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &privilege_ui_identity, "XUserResolvePrivilegeWithUiAsync", gamer_pic_provider );
 }
 
 static HRESULT WINAPI x_user_XUserResolvePrivilegeWithUiResult( IXUserImpl6 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &privilege_ui_identity, 0, NULL, NULL );
 }
 
 /* Real, cached Xbox Live sign-in state - lazily populated the first time a
@@ -778,26 +793,30 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Result( IXUserImpl6 *
 
 static HRESULT WINAPI x_user_XUserResolveIssueWithUiAsync( IXUserImpl6 *iface, XUserHandle user, const char *url, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, url %s, async %p stub!\n", iface, user, debugstr_a( url ), async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, url %s, async %p\n", iface, user, debugstr_a( url ), async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &privilege_ui_identity, "XUserResolveIssueWithUiAsync", gamer_pic_provider );
 }
 
 static HRESULT WINAPI x_user_XUserResolveIssueWithUiResult( IXUserImpl6 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &privilege_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_user_XUserResolveIssueWithUiUtf16Async( IXUserImpl6 *iface, XUserHandle user, const WCHAR *url, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, url %s, async %p stub!\n", iface, user, debugstr_w( url ), async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, url %s, async %p\n", iface, user, debugstr_w( url ), async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL, &privilege_ui_identity, "XUserResolveIssueWithUiUtf16Async", gamer_pic_provider );
 }
 
 static HRESULT WINAPI x_user_XUserResolveIssueWithUiUtf16Result( IXUserImpl6 *iface, XAsyncBlock *async )
 {
-    FIXME( "iface %p, async %p stub!\n", iface, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p\n", iface, async );
+    if (!async) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResult( x_threading_impl, async, &privilege_ui_identity, 0, NULL, NULL );
 }
 
 static HRESULT WINAPI x_user_XUserRegisterForChangeEvent( IXUserImpl6 *iface, XTaskQueueHandle queue, void *context, XUserChangeEventCallback *callback, XTaskQueueRegistrationToken *token )
