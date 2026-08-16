@@ -261,22 +261,90 @@ static void WINAPI x_game_save_XGameSaveCloseContainer( IXGameSaveImpl3 *iface, 
     TRACE( "iface %p, context %p\n", iface, context );
 }
 
+static void get_saves_directory( WCHAR *outPath )
+{
+    WCHAR userProfile[MAX_PATH];
+    if (!GetEnvironmentVariableW( L"USERPROFILE", userProfile, MAX_PATH ))
+        wcscpy( userProfile, L"C:\\users\\steamuser" );
+
+    swprintf( outPath, MAX_PATH, L"%s\\Documents\\My Games\\Fallout4 MS\\Saves", userProfile );
+    CreateDirectoryW( outPath, NULL );
+}
+
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateBlobInfo( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, void *context, XGameSaveBlobInfoCallback *callback )
 {
+    WCHAR dirPath[MAX_PATH];
+    WCHAR searchPath[MAX_PATH];
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind;
+
     TRACE( "iface %p, container %p, context %p, callback %p\n", iface, container, context, callback );
+    if (!callback) return E_INVALIDARG;
+
+    get_saves_directory( dirPath );
+    swprintf( searchPath, MAX_PATH, L"%s\\*", dirPath );
+
+    hFind = FindFirstFileW( searchPath, &findData );
+    if (hFind != INVALID_HANDLE_VALUE)
+    {
+        do {
+            if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            {
+                char nameA[MAX_PATH];
+                XGameSaveBlobInfo info;
+
+                WideCharToMultiByte( CP_UTF8, 0, findData.cFileName, -1, nameA, MAX_PATH, NULL, NULL );
+                info.name = nameA;
+                info.size = findData.nFileSizeLow;
+
+                if (!callback( &info, context )) break;
+            }
+        } while (FindNextFileW( hFind, &findData ));
+        FindClose( hFind );
+    }
+
     return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateBlobInfoByName( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char *blobNamePrefix, void *context, XGameSaveBlobInfoCallback *callback )
 {
     TRACE( "iface %p, container %p, blobNamePrefix %s, context %p, callback %p\n", iface, container, debugstr_a( blobNamePrefix ), context, callback );
-    return S_OK;
+    return x_game_save_XGameSaveEnumerateBlobInfo( iface, container, context, callback );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveReadBlobData( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char **blobNames, UINT32 *countOfBlobs, SIZE_T blobsSize, XGameSaveBlob *blobData )
 {
+    WCHAR dirPath[MAX_PATH];
+    WCHAR filePath[MAX_PATH];
+    WCHAR blobNameW[MAX_PATH];
+    HANDLE hFile;
+    DWORD readBytes;
+    UINT32 i;
+
     TRACE( "iface %p, container %p, blobNames %p, countOfBlobs %p, blobsSize %Iu, blobData %p\n", iface, container, blobNames, countOfBlobs, blobsSize, blobData );
-    if (countOfBlobs) *countOfBlobs = 0;
+
+    if (!blobNames || !countOfBlobs || !blobData) return E_INVALIDARG;
+
+    get_saves_directory( dirPath );
+
+    for (i = 0; i < *countOfBlobs; i++)
+    {
+        MultiByteToWideChar( CP_UTF8, 0, blobNames[i], -1, blobNameW, MAX_PATH );
+        swprintf( filePath, MAX_PATH, L"%s\\%s", dirPath, blobNameW );
+
+        hFile = CreateFileW( filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+        if (hFile != INVALID_HANDLE_VALUE)
+        {
+            DWORD size = GetFileSize( hFile, NULL );
+            if (blobData[i].data && blobData[i].info.size >= size)
+            {
+                ReadFile( hFile, blobData[i].data, size, &readBytes, NULL );
+                blobData[i].info.size = readBytes;
+            }
+            CloseHandle( hFile );
+        }
+    }
+
     return S_OK;
 }
 
@@ -310,13 +378,45 @@ static void WINAPI x_game_save_XGameSaveCloseUpdate( IXGameSaveImpl3 *iface, XGa
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitBlobWrite( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext, const char *blobName, UINT8 *data, SIZE_T byteCount )
 {
+    WCHAR dirPath[MAX_PATH];
+    WCHAR filePath[MAX_PATH];
+    WCHAR blobNameW[MAX_PATH];
+    HANDLE hFile;
+    DWORD written;
+
     TRACE( "iface %p, updateContext %p, blobName %s, data %p, byteCount %Iu\n", iface, updateContext, debugstr_a( blobName ), data, byteCount );
+
+    if (!blobName || !data) return E_INVALIDARG;
+
+    get_saves_directory( dirPath );
+    MultiByteToWideChar( CP_UTF8, 0, blobName, -1, blobNameW, MAX_PATH );
+    swprintf( filePath, MAX_PATH, L"%s\\%s", dirPath, blobNameW );
+
+    hFile = CreateFileW( filePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+    if (hFile != INVALID_HANDLE_VALUE)
+    {
+        WriteFile( hFile, data, (DWORD)byteCount, &written, NULL );
+        CloseHandle( hFile );
+    }
+
     return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveSubmitBlobDelete( IXGameSaveImpl3 *iface, XGameSaveUpdateHandle updateContext, const char *blobName )
 {
+    WCHAR dirPath[MAX_PATH];
+    WCHAR filePath[MAX_PATH];
+    WCHAR blobNameW[MAX_PATH];
+
     TRACE( "iface %p, updateContext %p, blobName %s\n", iface, updateContext, debugstr_a( blobName ) );
+
+    if (!blobName) return E_INVALIDARG;
+
+    get_saves_directory( dirPath );
+    MultiByteToWideChar( CP_UTF8, 0, blobName, -1, blobNameW, MAX_PATH );
+    swprintf( filePath, MAX_PATH, L"%s\\%s", dirPath, blobNameW );
+    DeleteFileW( filePath );
+
     return S_OK;
 }
 
