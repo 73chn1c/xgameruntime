@@ -77,8 +77,9 @@ static HRESULT WINAPI __PADDING__( IXDisplayImpl *iface )
 
 static XDisplayHdrModeResult WINAPI x_display_XDisplayTryEnableHdrMode( IXDisplayImpl *iface, XDisplayHdrModePreference displayModePreference, XDisplayHdrModeInfo *displayHdrModeInfo )
 {
-    FIXME( "iface %p, displayModePreference %d, displayHdrModeInfo %p stub!\n", iface, displayModePreference, displayHdrModeInfo );
-    return XDisplayHdrModeResult_Unknown;
+    TRACE( "iface %p, displayModePreference %d, displayHdrModeInfo %p\n", iface, displayModePreference, displayHdrModeInfo );
+    if (displayHdrModeInfo) memset( displayHdrModeInfo, 0, sizeof(*displayHdrModeInfo) );
+    return XDisplayHdrModeResult_Disabled;
 }
 
 static const struct IXDisplayImplVtbl x_display_vtbl =
