@@ -183,37 +183,39 @@ static HRESULT WINAPI x_game_save_XGameSaveGetContainerInfo( IXGameSaveImpl3 *if
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateContainerInfo( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, void *context, XGameSaveContainerInfoCallback *callback )
 {
-    FIXME( "iface %p, provider %p, context %p, callback %p stub!\n", iface, provider, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, context %p, callback %p\n", iface, provider, context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateContainerInfoByName( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, const char *containerNamePrefix, void *context, XGameSaveContainerInfoCallback *callback )
 {
-    FIXME( "iface %p, provider %p, containerNamePrefix %s, context %p, callback %p stub!\n", iface, provider, debugstr_a( containerNamePrefix ), context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, containerNamePrefix %s, context %p, callback %p\n", iface, provider, debugstr_a( containerNamePrefix ), context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveCreateContainer( IXGameSaveImpl3 *iface, XGameSaveProviderHandle provider, const char *containerName, XGameSaveContainerHandle *containerContext )
 {
-    FIXME( "iface %p, provider %p, containerName %s, containerContext %p stub!\n", iface, provider, debugstr_a( containerName ), containerContext );
-    return E_NOTIMPL;
+    TRACE( "iface %p, provider %p, containerName %s, containerContext %p\n", iface, provider, debugstr_a( containerName ), containerContext );
+    if (!containerContext) return E_POINTER;
+    *containerContext = (XGameSaveContainerHandle)0x4001;
+    return S_OK;
 }
 
 static void WINAPI x_game_save_XGameSaveCloseContainer( IXGameSaveImpl3 *iface, XGameSaveContainerHandle context )
 {
-    FIXME( "iface %p, context %p stub!\n", iface, context );
+    TRACE( "iface %p, context %p\n", iface, context );
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateBlobInfo( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, void *context, XGameSaveBlobInfoCallback *callback )
 {
-    FIXME( "iface %p, container %p, context %p, callback %p stub!\n", iface, container, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, container %p, context %p, callback %p\n", iface, container, context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveEnumerateBlobInfoByName( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char *blobNamePrefix, void *context, XGameSaveBlobInfoCallback *callback )
 {
-    FIXME( "iface %p, container %p, blobNamePrefix %s, context %p, callback %p stub!\n", iface, container, debugstr_a( blobNamePrefix ), context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, container %p, blobNamePrefix %s, context %p, callback %p\n", iface, container, debugstr_a( blobNamePrefix ), context, callback );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_game_save_XGameSaveReadBlobData( IXGameSaveImpl3 *iface, XGameSaveContainerHandle container, const char **blobNames, UINT32 *countOfBlobs, SIZE_T blobsSize, XGameSaveBlob *blobData )
