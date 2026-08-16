@@ -43,7 +43,8 @@ static HRESULT WINAPI x_game_save_QueryInterface( IXGameSaveImpl3 *iface, REFIID
     if (IsEqualGUID( iid, &IID_IUnknown        ) ||
         IsEqualGUID( iid, &IID_IXGameSaveImpl  ) ||
         IsEqualGUID( iid, &IID_IXGameSaveImpl2 ) ||
-        IsEqualGUID( iid, &IID_IXGameSaveImpl3 ))
+        IsEqualGUID( iid, &IID_IXGameSaveImpl3 ) ||
+        IsEqualGUID( iid, &IID_IXGameSaveImpl4 ))
     {
         IXGameSaveImpl_AddRef( *out = &impl->IXGameSaveImpl3_iface );
         return S_OK;

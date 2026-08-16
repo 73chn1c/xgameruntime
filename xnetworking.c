@@ -219,7 +219,7 @@ static HRESULT WINAPI x_networking_XNetworkingRegisterConnectivityHintChanged( I
      * the registration (and simply never firing the callback) matches real
      * behavior on a machine whose connectivity state is stable, and avoids
      * callers treating a failed *registration* itself as fatal. */
-    token->token = 0;
+    token->token = 1;
     return S_OK;
 }
 

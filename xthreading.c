@@ -739,6 +739,30 @@ static void WINAPI x_threading_XTaskQueueCloseHandle( IXThreadingImpl *iface, XT
     free( q );
 }
 
+static DWORD WINAPI threadpool_port_dispatcher( void *arg )
+{
+    struct x_task_queue_port *port = arg;
+    struct task_callback_entry *entry = NULL;
+    struct list *head;
+
+    EnterCriticalSection( &port->cs );
+    if (!list_empty( &port->pending ) && !ReadNoFence( &port->terminated ))
+    {
+        head = list_head( &port->pending );
+        entry = LIST_ENTRY( head, struct task_callback_entry, entry );
+        list_remove( &entry->entry );
+    }
+    LeaveCriticalSection( &port->cs );
+
+    if (entry)
+    {
+        entry->callback( entry->context, FALSE );
+        free( entry );
+    }
+    port_release( port );
+    return 0;
+}
+
 static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port_type, void *callbackContext, XTaskQueueCallback *callback )
 {
     struct x_task_queue *q = (struct x_task_queue *)queue;
@@ -768,6 +792,16 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *ifa
     list_add_tail( &port->pending, &entry->entry );
     LeaveCriticalSection( &port->cs );
     WakeAllConditionVariable( &port->cv );
+
+    if (port->dispatch_mode == XTaskQueueDispatchMode_ThreadPool ||
+        port->dispatch_mode == XTaskQueueDispatchMode_SerializedThreadPool)
+    {
+        port_addref( port );
+        if (!QueueUserWorkItem( threadpool_port_dispatcher, port, WT_EXECUTEDEFAULT ))
+        {
+            port_release( port );
+        }
+    }
 
     return S_OK;
 }
@@ -910,6 +944,18 @@ static BOOLEAN WINAPI x_threading_XTaskQueueGetCurrentProcessTaskQueue( IXThread
     TRACE( "iface %p, queue %p.\n", iface, queue );
 
     if (!queue) return FALSE;
+
+    if (!current_process_task_queue)
+    {
+        XTaskQueueHandle default_q = NULL;
+        if (SUCCEEDED(x_threading_XTaskQueueCreate( iface, XTaskQueueDispatchMode_ThreadPool, XTaskQueueDispatchMode_ThreadPool, &default_q )))
+        {
+            if (InterlockedCompareExchangePointer( (void **)&current_process_task_queue, default_q, NULL ))
+            {
+                x_threading_XTaskQueueCloseHandle( iface, default_q );
+            }
+        }
+    }
 
     q = current_process_task_queue;
     if (!q)

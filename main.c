@@ -72,10 +72,8 @@ HRESULT WINAPI UninitializeApiImpl( void )
     return S_OK;
 }
 
-HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
+static HRESULT query_api_impl( REFCLSID clsid, REFIID iid, void **out )
 {
-    TRACE( "clsid %s, iid %s, out %p.\n", debugstr_guid( clsid ), debugstr_guid( iid ), out );
-
     if (IsEqualGUID( clsid, &CLSID_XAccessibilityImpl ))
         return IXAccessibilityImpl_QueryInterface( x_accessibility_impl, iid, out );
     if (IsEqualGUID( clsid, &CLSID_XAppCaptureImpl ))
@@ -126,4 +124,13 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return IXUserDeviceImpl_QueryInterface( x_user_device_impl, iid, out );
 
     return HRESULT_FROM_WIN32( ERROR_NOT_SUPPORTED );
+}
+
+HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
+{
+    HRESULT hr;
+    TRACE( "clsid %s, iid %s, out %p.\n", debugstr_guid( clsid ), debugstr_guid( iid ), out );
+    hr = query_api_impl( clsid, iid, out );
+    TRACE( "clsid %s returning hr %#lx\n", debugstr_guid( clsid ), hr );
+    return hr;
 }
