@@ -83,14 +83,20 @@ static HRESULT WINAPI x_system_XSystemGetConsoleId( IXSystemImpl5 *iface, INT32 
 
     TRACE( "iface %p, consoleIdSize %d, consoleId %p, consoleIdUsed %p\n", iface, consoleIdSize, consoleId, consoleIdUsed );
 
-    if (!consoleId || !consoleIdUsed)
+    /* consoleIdUsed is annotated _Out_opt_ in the documented GDK contract
+     * (and [out, optional] in xsystem.idl), same as the sibling
+     * XSystemGetXboxLiveSandboxId / XSystemGetAppSpecificDeviceId. Real GDK
+     * thunk code calls these with the "used" pointer NULL, so rejecting that
+     * with E_POINTER breaks those callers. */
+    if (!consoleId)
         return E_POINTER;
 
     if (consoleIdSize < XSystemConsoleIdBytes)
         return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
 
     strcpy_s( consoleId, consoleIdSize, Id );
-    *consoleIdUsed = strlen( Id ) + 1;
+    if (consoleIdUsed)
+        *consoleIdUsed = strlen( Id ) + 1;
     return S_OK;
 }
 
@@ -119,8 +125,25 @@ static HRESULT WINAPI x_system_XSystemGetXboxLiveSandboxId( IXSystemImpl5 *iface
 
 static HRESULT WINAPI x_system_XSystemGetAppSpecificDeviceId( IXSystemImpl5 *iface, INT32 appSpecificDeviceIdSize, char *appSpecificDeviceId, SIZE_T *appSpecificDeviceIdUsed )
 {
-    FIXME( "iface %p, appSpecificDeviceIdSize %d, appSpecificDeviceId %p, appSpecificDeviceIdUsed %p stub!\n", iface, appSpecificDeviceIdSize, appSpecificDeviceId, appSpecificDeviceIdUsed );
-    return E_NOTIMPL;
+    /* Real GDK returns a base64 app-scoped device identifier (XSystemAppSpecificDeviceIdBytes
+     * bytes including NUL). No such hardware identity exists on this build, so - like the
+     * sibling XSystemGetConsoleId / XSystemGetXboxLiveSandboxId getters - return a stable
+     * placeholder of the documented length. Titles that only key/telemetry off the string
+     * work; the value just doesn't vary per device. */
+    const char *Id = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+    TRACE( "iface %p, appSpecificDeviceIdSize %d, appSpecificDeviceId %p, appSpecificDeviceIdUsed %p\n", iface, appSpecificDeviceIdSize, appSpecificDeviceId, appSpecificDeviceIdUsed );
+
+    if (!appSpecificDeviceId)
+        return E_POINTER;
+
+    if (appSpecificDeviceIdSize < XSystemAppSpecificDeviceIdBytes)
+        return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
+
+    strcpy_s( appSpecificDeviceId, appSpecificDeviceIdSize, Id );
+    if (appSpecificDeviceIdUsed)
+        *appSpecificDeviceIdUsed = strlen( Id ) + 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_system_XSystemHandleTrack( IXSystemImpl5 *iface, XSystemHandleCallback callback, void *context )
